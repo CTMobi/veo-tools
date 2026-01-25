@@ -184,7 +184,7 @@ npx ts-node veo-generate.ts \
 | `--prompt`, `-p` | string | required | Cinematic prompt |
 | `--output`, `-o` | path | ./veo-output.mp4 | Output file path |
 | `--aspect-ratio` | 16:9, 9:16 | 16:9 | Video aspect ratio |
-| `--duration` | 4, 6, 8 | 6 | Duration in seconds |
+| `--duration` | 4, 6, 8 | 8 | Duration in seconds (API limit) |
 | `--resolution` | 720p, 1080p | 720p | Video resolution |
 | `--audio` | flag | false | Enable audio generation |
 | `--model` | see below | quality | Model variant |

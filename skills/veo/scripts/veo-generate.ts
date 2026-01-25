@@ -81,7 +81,7 @@ const CREDENTIALS_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS
 
 const DEFAULT_CONFIG: Required<Omit<VeoConfig, 'prompt' | 'seed'>> = {
   aspectRatio: '16:9',
-  durationSeconds: 6,
+  durationSeconds: 8,
   resolution: '720p',
   generateAudio: false,
   sampleCount: 1,
@@ -439,7 +439,7 @@ Required:
 Options:
   --output, -o        Output file path (default: ./veo-output.mp4)
   --aspect-ratio      16:9 or 9:16 (default: 16:9)
-  --duration          4, 6, or 8 seconds (default: 6)
+  --duration          4, 6, or 8 seconds (default: 8)
   --resolution        720p or 1080p (default: 720p)
   --audio             Enable audio generation (default: false)
   --model             veo-3.1-generate-001 or veo-3.1-fast-generate-001

@@ -198,11 +198,45 @@ npx ts-node scripts/veo-generate.ts \
 |-----------|---------|---------|-------|
 | `model` | `veo-3.1-generate-001`, `veo-3.1-fast-generate-001` | quality model | Fast model for iteration |
 | `aspectRatio` | `16:9`, `9:16` | `16:9` | 9:16 for vertical/mobile |
-| `durationSeconds` | `4`, `6`, `8` | `6` | Shorter = better loops |
+| `durationSeconds` | `4`, `6`, `8` | `8` | API only supports these values |
 | `resolution` | `720p`, `1080p` | `720p` | 1080p for high-bandwidth |
 | `generateAudio` | `true`, `false` | `false` | Enable for marketing |
 | `sampleCount` | `1-4` | `1` | Multiple variations |
 | `seed` | integer | random | Reproducibility |
+
+### Duration Strategy
+
+**API Limitation**: Veo 3.1 only supports **4, 6, or 8 second** clips. This is a hard API constraint.
+
+**When to use each duration:**
+| Duration | Best For | Why |
+|----------|----------|-----|
+| **4 seconds** | Seamless loops, hero backgrounds | Shorter = smoother loop transitions, less motion to reconcile |
+| **6 seconds** | Product reveals, transitions | Balance of content and loopability |
+| **8 seconds** | Marketing clips, social content, storytelling | Maximum content per generation, better for standalone videos |
+
+**Creating Longer Content (15-60+ seconds):**
+
+For marketing videos, ads, or content requiring more than 8 seconds:
+
+1. **Scene-based approach**: Generate multiple 8-second clips with different but related prompts
+   - Clip 1: Wide establishing shot
+   - Clip 2: Medium detail shot
+   - Clip 3: Close-up product/hero shot
+   - Clip 4: Pull-out or resolution shot
+
+2. **Continuous narrative**: Use consistent visual language across clips
+   - Same color palette, lighting style, and mood
+   - Matching camera energy (all slow/contemplative OR all dynamic)
+   - Same aspect ratio and resolution
+
+3. **Assembly**: Combine clips using video editing (FFmpeg, Premiere, etc.)
+   ```bash
+   # Concatenate clips with FFmpeg
+   ffmpeg -f concat -i clips.txt -c copy final-video.mp4
+   ```
+
+4. **Audio layering**: Generate clips without audio, add music/voiceover in post
 
 ### Async Workflow
 Video generation takes 2-4 minutes. The script:
@@ -251,13 +285,15 @@ Before generating:
 - [ ] Subject survives 35% darkening
 
 ### Settings by Use Case
-| Use Case | Aspect | Duration | Resolution | Audio |
-|----------|--------|----------|------------|-------|
-| Hero background | 16:9 | 4-6s | 720p | off |
-| Marketing video | 16:9 | 6-8s | 1080p | on |
-| Social (vertical) | 9:16 | 4-6s | 1080p | on |
-| Product showcase | 16:9 | 6-8s | 1080p | off |
-| Ambient loop | 16:9 | 4s | 720p | off |
+| Use Case | Aspect | Duration | Resolution | Audio | Notes |
+|----------|--------|----------|------------|-------|-------|
+| Hero background | 16:9 | 4s | 720p | off | Shortest for smoothest loops |
+| Ambient loop | 16:9 | 4s | 720p | off | Minimal motion, locked camera |
+| Product showcase | 16:9 | 8s | 1080p | off | Max duration for full reveal |
+| Marketing clip | 16:9 | 8s | 1080p | on | Chain multiple for longer ads |
+| Social (vertical) | 9:16 | 8s | 1080p | on | Reels/TikTok format |
+| App store preview | 9:16 | 8s | 1080p | off | 15-30s = chain 2-4 clips |
+| Landing page hero | 16:9 | 6s | 720p | off | Balance: content + loop quality |
 
 ---
 
