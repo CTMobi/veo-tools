@@ -32,6 +32,56 @@ cp -r veo-tools/skills/* /path/to/your/project/.claude/skills/
 | `veo-setup` | `/veo-setup` | Configure Google Cloud project and authentication |
 | `video-loop` | `/video-loop` | Create seamless infinite loops from any video |
 
+## How the Veo Skill Works
+
+The `/veo` skill follows a **6-phase workflow** designed to prevent bad prompts from reaching expensive API calls:
+
+```
+User Request → UNDERSTAND → CRAFT → VALIDATE → PRESENT → GENERATE → ITERATE
+```
+
+### Phase 1: UNDERSTAND
+Claude gathers context before crafting any prompt:
+- Use case (hero background, marketing, social, product)
+- Mood and visual direction
+- Technical requirements
+- What must NOT appear
+
+**If your request is vague**, Claude will ask clarifying questions first.
+
+### Phase 2: CRAFT
+Claude builds the prompt using the **5-Element Formula**:
+```
+[Cinematography] + [Subject] + [Action] + [Context] + [Style & Ambiance]
+```
+
+### Phase 3: VALIDATE
+Every prompt is checked against quality criteria:
+- Single camera movement (no stacking)
+- No text/UI requests (Veo can't render text)
+- No conflicting descriptors
+- Loop flags present (for hero backgrounds)
+- Material specificity included
+
+### Phase 4: PRESENT & AWAIT APPROVAL
+Claude presents the prompt with validation status and **waits for your approval** before generating:
+
+```
+READY FOR REVIEW:
+
+Prompt: [crafted prompt]
+Settings: 16:9, 4s, 720p
+Validation: PASSED
+
+Shall I generate this video? (Cost: ~$0.50, Time: 2-4 minutes)
+```
+
+### Phase 5: GENERATE
+Only after approval, generation begins.
+
+### Phase 6: ITERATE
+If results don't match expectations, Claude guides targeted improvements rather than starting over.
+
 ## Quick Start
 
 ### Prerequisites
@@ -255,13 +305,15 @@ veo-tools/
 │   └── plugin.json               # Plugin configuration
 ├── skills/
 │   ├── veo/                      # Video generation skill
-│   │   ├── SKILL.md              # Cinematic prompt engineering
+│   │   ├── SKILL.md              # 6-phase workflow + prompt engineering
 │   │   ├── scripts/
 │   │   │   └── veo-generate.ts   # Generation script
+│   │   ├── validation/
+│   │   │   └── prompt-checklist.md  # Quality validation rules
 │   │   ├── references/
 │   │   │   └── cinematography-lexicon.md
 │   │   └── examples/
-│   │       └── hero-prompts.md
+│   │       └── hero-prompts.md   # Annotated example prompts
 │   ├── veo-setup/                # Setup skill
 │   │   └── SKILL.md              # GCP configuration guide
 │   └── video-loop/               # Loop creation skill

@@ -5,7 +5,166 @@ description: AI video generation using Google Veo 3 via Vertex AI. Creates short
 
 This skill transforms user intent into cinematic video using Google Veo 3.1. Every frame deliberate. Every movement purposeful. Generate videos that burn into memory—not generic stock footage that fades into noise.
 
-The user provides video requirements: a concept, scene, mood, or use case. They may include context about brand, audience, or technical constraints.
+---
+
+## Workflow (FOLLOW IN ORDER)
+
+**CRITICAL**: Follow these phases sequentially. Never skip validation. Never generate without user approval.
+
+### PHASE 1: UNDERSTAND
+
+Before crafting any prompt, gather context through conversation:
+
+**Required Context:**
+- **USE CASE**: hero-background | marketing | social | product | ambient
+- **MOOD**: ethereal | kinetic | contemplative | industrial | organic | futuristic | vintage | dramatic | abstract
+- **TECHNICAL REQUIREMENTS**: aspect ratio, duration, resolution needs
+- **ANTI-GOALS**: What must NOT appear (competing brands, specific imagery to avoid)
+
+**If the user request is vague, ASK clarifying questions:**
+
+```
+Before I craft your prompt, I need to understand:
+1. Where will this video be used? (hero background, social media, product page)
+2. What mood or feeling should it evoke?
+3. Any brand colors or visual constraints?
+4. What should the video absolutely NOT contain?
+```
+
+**Vague Request Examples (require clarification):**
+- "Make me a video for my website" → Ask: What type of website? What section? What feeling?
+- "Create something cool" → Ask: Cool how? Energetic? Mysterious? Futuristic?
+- "I need a background video" → Ask: What's the content above it? Tech? Wellness? Finance?
+
+**Clear Request Examples (proceed to Phase 2):**
+- "Create a hero background for my SaaS landing page with floating data particles, ethereal blue mood"
+- "Generate a product showcase video for a luxury watch, slow orbit, dramatic lighting"
+
+### PHASE 2: CRAFT
+
+Build the prompt using the **5-Element Formula** (see detailed reference below):
+
+```
+[Cinematography] + [Subject] + [Action] + [Context] + [Style & Ambiance]
+```
+
+**Checklist while crafting:**
+- [ ] Single camera movement (no stacking)
+- [ ] Specific subject with material detail
+- [ ] One primary action in present continuous tense
+- [ ] Grounded location/temporal context
+- [ ] Clear lighting and color direction
+
+For hero backgrounds, ALWAYS include:
+- `seamless loop`
+- `locked camera` or `static camera`
+- Subtle motion descriptors (`gentle`, `slowly`, `imperceptibly`)
+
+Reference `references/cinematography-lexicon.md` for precise terminology.
+Reference `examples/hero-prompts.md` for proven patterns.
+
+### PHASE 3: VALIDATE (MANDATORY)
+
+Before presenting to user, verify against `validation/prompt-checklist.md`:
+
+**REJECT (Do Not Generate):**
+- [ ] Multiple camera movements ("dolly while panning")
+- [ ] Text/UI element requests (Veo cannot render readable text)
+- [ ] Conflicting descriptors ("dynamic but subtle", "energetic but calm")
+
+**WARNING (Suggest Improvements):**
+- [ ] Generic descriptions without material specificity
+- [ ] Missing lighting/atmosphere direction
+- [ ] Duration mismatch for content type
+
+**LOOP-SPECIFIC (for hero backgrounds):**
+- [ ] Contains "seamless loop"
+- [ ] Contains "locked camera" or "static camera"
+- [ ] Motion is subtle/gentle (not dramatic)
+
+### PHASE 4: PRESENT & AWAIT APPROVAL
+
+**CRITICAL: Present the prompt and WAIT for explicit user approval before generating.**
+
+Format your presentation as:
+
+```
+READY FOR REVIEW:
+
+Prompt:
+[Full crafted prompt]
+
+Settings:
+- Aspect Ratio: [16:9 | 9:16]
+- Duration: [4s | 6s | 8s]
+- Resolution: [720p | 1080p]
+- Audio: [off | on]
+
+Validation: PASSED
+- Single camera movement
+- No text requests
+- Loop flags present (if applicable)
+- Motion intensity appropriate
+
+Shall I generate this video? (Cost: ~$0.50, Time: 2-4 minutes)
+```
+
+If validation fails, present issues and suggest fixes:
+
+```
+VALIDATION ISSUES FOUND:
+
+Prompt:
+[Problematic prompt]
+
+Issues:
+- REJECT: Multiple camera movements detected ("dolly while panning")
+- WARNING: No material specificity for "metal surface"
+
+Suggested Fix:
+[Corrected prompt]
+
+Shall I proceed with the corrected version?
+```
+
+### PHASE 5: GENERATE
+
+Only after user approval, execute generation using `scripts/veo-generate.ts`:
+
+```bash
+npx ts-node scripts/veo-generate.ts \
+  --prompt "your validated prompt" \
+  --aspect-ratio 16:9 \
+  --duration 6 \
+  --resolution 720p \
+  --output ./hero-video.mp4
+```
+
+Report completion with file path.
+
+### PHASE 6: ITERATE (if unsatisfied)
+
+If the user is not satisfied with results, guide targeted improvements:
+
+**Ask**: "What specifically didn't work?"
+
+| Problem | Diagnosis | Solution |
+|---------|-----------|----------|
+| Too static/boring | Insufficient motion description | Increase motion intensity, add particle effects |
+| Too chaotic | Too much action, moving camera | Simplify to single action, lock camera |
+| Wrong mood | Style/lighting mismatch | Revisit atmosphere descriptors |
+| Doesn't loop well | Motion too complex for loop | Use 4s duration, lock camera, reduce motion |
+| Generic output | Lacking material specificity | Add texture/material detail |
+| Wrong color feel | Color direction unclear | Add explicit palette direction |
+
+**Iteration Workflow:**
+1. Identify specific issue from user feedback
+2. Modify relevant prompt element (don't start over)
+3. Re-validate the modified prompt
+4. Present for approval
+5. Generate with same seed for comparison (optional: `--seed [original_seed]`)
+
+---
 
 ## Cinematic Thinking
 
@@ -27,6 +186,8 @@ Before generating, understand the context and commit to a BOLD cinematic directi
 
 **CRITICAL**: Veo rewards specificity and professional terminology. Vague prompts produce forgettable videos. Commit to a vision and describe it with the precision of a cinematographer.
 
+---
+
 ## The Cinematic Prompt Formula
 
 Construct prompts using five elements. Order matters—lead with camera, end with atmosphere:
@@ -41,7 +202,7 @@ Start with ONE camera verb. Never stack movements.
 | `dolly forward/back` | Intimate approach or retreat | Drawing viewer into subject |
 | `tracking left/right` | Lateral journey | Revealing space progressively |
 | `crane up/down` | Vertical revelation | Showing scale, context |
-| `orbit` | 360° examination | Product showcase, sculpture |
+| `orbit` | 360 degree examination | Product showcase, sculpture |
 | `push in` | Intensifying focus | Building tension |
 | `pull out` | Expanding context | Revealing environment |
 | `static/locked` | Pure observation | Hero backgrounds, loops |
@@ -57,9 +218,9 @@ Add lens context when it shapes the image:
 Be ruthlessly specific. Not "a person" but "a ceramicist in her 70s, clay-dusted apron, silver hair tied back."
 
 Material specificity elevates everything:
-- ❌ "metal surface" → ✅ "brushed titanium with microscopic scratches catching light"
-- ❌ "water" → ✅ "black coffee rippling in a ceramic cup"
-- ❌ "particles" → ✅ "bioluminescent spores drifting upward"
+- "metal surface" → "brushed titanium with microscopic scratches catching light"
+- "water" → "black coffee rippling in a ceramic cup"
+- "particles" → "bioluminescent spores drifting upward"
 
 ### Element 3: Action
 One primary motion. Present continuous tense.
@@ -80,8 +241,8 @@ For marketing/product, allow dynamism:
 Ground the subject in space and time.
 
 **Location specificity**:
-- ❌ "office" → ✅ "corner office, floor 47, rain streaking the windows"
-- ❌ "nature" → ✅ "Pacific Northwest forest floor, post-rain, fern-heavy"
+- "office" → "corner office, floor 47, rain streaking the windows"
+- "nature" → "Pacific Northwest forest floor, post-rain, fern-heavy"
 
 **Temporal anchors**:
 - `golden hour — last fifteen minutes`
@@ -110,6 +271,8 @@ The emotional finish. Lighting + color + reference.
 - `Terrence Malick — natural light, magic hour, reverent`
 - `Fincher — precise, clinical, desaturated`
 - `Wes Anderson — symmetry, pastel, storybook`
+
+---
 
 ## Hero Background Mastery
 
@@ -170,6 +333,8 @@ Slow orbit around floating geometric forms, sharp shadows, single saturated acce
 ```
 Static wide shot of minimalist interior, single beam of light slowly traveling across concrete wall, dust motes visible, seamless loop, locked camera, contemplative corporate, desaturated palette
 ```
+
+---
 
 ## Implementation
 
@@ -251,22 +416,26 @@ Video generation takes 2-4 minutes. The script:
 - **Timeout**: Default 5 minutes, configurable
 - **Rate limits**: Automatic exponential backoff
 
+---
+
 ## Anti-Patterns
 
 NEVER generate:
-- ❌ Vague prompts: "a nice background video"
-- ❌ Stacked camera movements: "dolly while panning and zooming"
-- ❌ Conflicting directions: "dynamic but subtle, energetic but calm"
-- ❌ Generic stock footage: "business people shaking hands"
-- ❌ Overcomplicated scenes: multiple subjects, multiple actions
-- ❌ Text or UI elements: Veo struggles with readable text
+- Vague prompts: "a nice background video"
+- Stacked camera movements: "dolly while panning and zooming"
+- Conflicting directions: "dynamic but subtle, energetic but calm"
+- Generic stock footage: "business people shaking hands"
+- Overcomplicated scenes: multiple subjects, multiple actions
+- Text or UI elements: Veo struggles with readable text
 
 ALWAYS generate:
-- ✅ Specific, visual language with material detail
-- ✅ Single camera movement, executed with purpose
-- ✅ Coherent mood that commits to a direction
-- ✅ Appropriate motion intensity for use case
-- ✅ Technical settings matched to delivery context
+- Specific, visual language with material detail
+- Single camera movement, executed with purpose
+- Coherent mood that commits to a direction
+- Appropriate motion intensity for use case
+- Technical settings matched to delivery context
+
+---
 
 ## Quick Reference
 
