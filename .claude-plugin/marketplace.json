@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "veo-tools",
-      "source": ".",
+      "source": "./",
       "description": "AI video generation using Google Veo 3 via Vertex AI"
     }
   ]
