@@ -1,0 +1,14 @@
+{
+  "name": "veo-tools",
+  "owner": {
+    "name": "Kurt Dowswell",
+    "github": "kdowswell"
+  },
+  "plugins": [
+    {
+      "name": "veo-tools",
+      "source": ".",
+      "description": "AI video generation using Google Veo 3 via Vertex AI"
+    }
+  ]
+}

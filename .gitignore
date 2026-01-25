@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Claude Code local settings
+.claude/
+
+# Output files
+*.mp4
+*.webm
+*.mov
+
+# Node
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# Credentials (never commit these!)
+*-service-account.json
+credentials.json

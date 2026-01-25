@@ -1,0 +1,264 @@
+---
+name: veo
+description: AI video generation using Google Veo 3 via Vertex AI. Creates short-form video content optimized for landing pages, marketing materials, and UI backgrounds. Supports text-to-video generation with automatic prompt engineering for seamless loops, hero sections, and ambient motion.
+---
+
+This skill transforms user intent into cinematic video using Google Veo 3.1. Every frame deliberate. Every movement purposeful. Generate videos that burn into memory—not generic stock footage that fades into noise.
+
+The user provides video requirements: a concept, scene, mood, or use case. They may include context about brand, audience, or technical constraints.
+
+## Cinematic Thinking
+
+Before generating, understand the context and commit to a BOLD cinematic direction:
+
+- **Purpose**: What story unfolds in 4-8 seconds? Who watches, and where?
+- **Mood**: Pick a cinematic register and OWN it:
+  - Ethereal/dreamlike — soft focus, floating motion, otherworldly
+  - Kinetic/energetic — dynamic cuts, velocity, pulse
+  - Contemplative/slow — measured pace, breathing room, stillness
+  - Industrial/mechanical — precision, repetition, engineered beauty
+  - Organic/natural — growth, flow, imperfection embraced
+  - Futuristic/tech — clean geometry, data visualization, tomorrow's aesthetic
+  - Vintage/nostalgic — film grain, warm tones, memory texture
+  - Dramatic/intense — high contrast, tension, weight
+  - Abstract/experimental — break expectations, pure form
+- **Camera Philosophy**: One camera. One movement. One moment. Restraint is power.
+- **The Unforgettable Frame**: What single frame sears into memory? Design for that.
+
+**CRITICAL**: Veo rewards specificity and professional terminology. Vague prompts produce forgettable videos. Commit to a vision and describe it with the precision of a cinematographer.
+
+## The Cinematic Prompt Formula
+
+Construct prompts using five elements. Order matters—lead with camera, end with atmosphere:
+
+**[Cinematography] + [Subject] + [Action] + [Context] + [Style & Ambiance]**
+
+### Element 1: Cinematography
+Start with ONE camera verb. Never stack movements.
+
+| Movement | Character | Use When |
+|----------|-----------|----------|
+| `dolly forward/back` | Intimate approach or retreat | Drawing viewer into subject |
+| `tracking left/right` | Lateral journey | Revealing space progressively |
+| `crane up/down` | Vertical revelation | Showing scale, context |
+| `orbit` | 360° examination | Product showcase, sculpture |
+| `push in` | Intensifying focus | Building tension |
+| `pull out` | Expanding context | Revealing environment |
+| `static/locked` | Pure observation | Hero backgrounds, loops |
+| `handheld` | Organic instability | Documentary feel |
+| `rack focus` | Shifting attention | Foreground/background play |
+
+Add lens context when it shapes the image:
+- `macro lens` — extreme detail, shallow depth
+- `telephoto compression` — flattened planes, intimacy at distance
+- `wide establishing` — environmental context, scale
+
+### Element 2: Subject
+Be ruthlessly specific. Not "a person" but "a ceramicist in her 70s, clay-dusted apron, silver hair tied back."
+
+Material specificity elevates everything:
+- ❌ "metal surface" → ✅ "brushed titanium with microscopic scratches catching light"
+- ❌ "water" → ✅ "black coffee rippling in a ceramic cup"
+- ❌ "particles" → ✅ "bioluminescent spores drifting upward"
+
+### Element 3: Action
+One primary motion. Present continuous tense.
+
+For hero backgrounds, favor subtle over dramatic:
+- `particles rising slowly`
+- `light shifting imperceptibly`
+- `fog rolling across`
+- `shadows lengthening`
+- `surface rippling gently`
+
+For marketing/product, allow dynamism:
+- `rotating to reveal`
+- `unfolding in sequence`
+- `assembling from fragments`
+
+### Element 4: Context
+Ground the subject in space and time.
+
+**Location specificity**:
+- ❌ "office" → ✅ "corner office, floor 47, rain streaking the windows"
+- ❌ "nature" → ✅ "Pacific Northwest forest floor, post-rain, fern-heavy"
+
+**Temporal anchors**:
+- `golden hour — last fifteen minutes`
+- `blue hour — deep twilight`
+- `3AM — sodium street light`
+- `overcast noon — flat diffused light`
+
+### Element 5: Style & Ambiance
+The emotional finish. Lighting + color + reference.
+
+**Lighting motifs**:
+- `single hard source, deep shadows`
+- `soft wraparound, minimal contrast`
+- `practical lights only, motivated`
+- `neon spill, complementary colors`
+- `backlit silhouette, rim light separation`
+
+**Color direction**:
+- `desaturated earth tones, lifted blacks`
+- `high contrast monochrome`
+- `split toning — warm highlights, cool shadows`
+- `single accent color against neutral`
+
+**Film references** (use sparingly, when apt):
+- `Blade Runner 2049 — vast, lonely, amber/teal`
+- `Terrence Malick — natural light, magic hour, reverent`
+- `Fincher — precise, clinical, desaturated`
+- `Wes Anderson — symmetry, pastel, storybook`
+
+## Hero Background Mastery
+
+Hero videos serve the text above them. They create atmosphere, not distraction.
+
+### Required Prompt Elements
+ALWAYS include for seamless loops:
+- `seamless loop` — signals loop intent to model
+- `locked camera` or `static camera` — prevents jarring motion
+- `subtle motion` or `gentle movement` — visual interest without distraction
+
+### Technical Settings
+```
+Aspect Ratio: 16:9 (standard hero)
+Duration: 4-6 seconds (shorter = smoother loop)
+Resolution: 720p (web performance) or 1080p (high-bandwidth)
+Audio: disabled (backgrounds are silent)
+```
+
+### The Loop Technique
+Veo generates linear video. For infinite loops:
+1. Generate one clip
+2. Duplicate the clip
+3. Reverse the duplicate
+4. Crossfade at junction points (0.5-1s)
+5. Result: mathematically seamless infinite loop
+
+### Design for Darkness
+Hero videos get overlaid with text. Plan for 35% darkening:
+- High-contrast subjects survive better
+- Avoid fine detail that disappears when dimmed
+- Light-on-dark scenes work better than dark-on-light
+- Test: squint at your mental image—still readable?
+
+### Hero Prompt Templates
+
+**Tech/SaaS — Abstract Data**
+```
+Slow dolly forward through infinite field of softly glowing data particles, gentle upward drift, deep blue void with purple edge light, seamless loop, locked camera, ethereal tech atmosphere, shallow depth of field
+```
+
+**Luxury/Premium — Material Study**
+```
+Static camera, extreme macro on brushed gold surface, single light source creating traveling highlight, particles of dust suspended in beam, seamless loop, contemplative, Fincher-esque precision
+```
+
+**Nature/Wellness — Organic Motion**
+```
+Locked camera observing morning mist rolling across still lake surface, soft diffused dawn light, mountains barely visible in background, seamless loop, gentle motion, Malick naturalism
+```
+
+**Creative/Agency — Bold Abstract**
+```
+Slow orbit around floating geometric forms, sharp shadows, single saturated accent color against deep black, shapes rotating imperceptibly, seamless loop, modernist, high contrast
+```
+
+**Finance/Enterprise — Architectural Stability**
+```
+Static wide shot of minimalist interior, single beam of light slowly traveling across concrete wall, dust motes visible, seamless loop, locked camera, contemplative corporate, desaturated palette
+```
+
+## Implementation
+
+### Environment Setup
+Required environment variables:
+```bash
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+```
+
+### Generation Script
+Use the included TypeScript script at `scripts/veo-generate.ts`:
+
+```bash
+npx ts-node scripts/veo-generate.ts \
+  --prompt "your cinematic prompt" \
+  --aspect-ratio 16:9 \
+  --duration 6 \
+  --resolution 720p \
+  --output ./hero-video.mp4
+```
+
+### API Parameters
+| Parameter | Options | Default | Notes |
+|-----------|---------|---------|-------|
+| `model` | `veo-3.1-generate-001`, `veo-3.1-fast-generate-001` | quality model | Fast model for iteration |
+| `aspectRatio` | `16:9`, `9:16` | `16:9` | 9:16 for vertical/mobile |
+| `durationSeconds` | `4`, `6`, `8` | `6` | Shorter = better loops |
+| `resolution` | `720p`, `1080p` | `720p` | 1080p for high-bandwidth |
+| `generateAudio` | `true`, `false` | `false` | Enable for marketing |
+| `sampleCount` | `1-4` | `1` | Multiple variations |
+| `seed` | integer | random | Reproducibility |
+
+### Async Workflow
+Video generation takes 2-4 minutes. The script:
+1. Submits generation request
+2. Returns operation ID immediately
+3. Polls for completion
+4. Downloads video to output path
+5. Reports success with file path
+
+### Error Handling
+- **Safety filter**: Prompt modification suggestions provided
+- **Timeout**: Default 5 minutes, configurable
+- **Rate limits**: Automatic exponential backoff
+
+## Anti-Patterns
+
+NEVER generate:
+- ❌ Vague prompts: "a nice background video"
+- ❌ Stacked camera movements: "dolly while panning and zooming"
+- ❌ Conflicting directions: "dynamic but subtle, energetic but calm"
+- ❌ Generic stock footage: "business people shaking hands"
+- ❌ Overcomplicated scenes: multiple subjects, multiple actions
+- ❌ Text or UI elements: Veo struggles with readable text
+
+ALWAYS generate:
+- ✅ Specific, visual language with material detail
+- ✅ Single camera movement, executed with purpose
+- ✅ Coherent mood that commits to a direction
+- ✅ Appropriate motion intensity for use case
+- ✅ Technical settings matched to delivery context
+
+## Quick Reference
+
+### Prompt Skeleton
+```
+[Camera movement] [lens context if relevant], [specific subject with material detail], [single present-continuous action], [location with temporal anchor], [lighting motif], [color direction], [any special flags: seamless loop, locked camera]
+```
+
+### Hero Background Checklist
+Before generating:
+- [ ] Contains `seamless loop`
+- [ ] Contains `locked camera` or `static camera`
+- [ ] Motion described as subtle/gentle
+- [ ] No dramatic camera movements
+- [ ] Duration 4-6 seconds
+- [ ] Subject survives 35% darkening
+
+### Settings by Use Case
+| Use Case | Aspect | Duration | Resolution | Audio |
+|----------|--------|----------|------------|-------|
+| Hero background | 16:9 | 4-6s | 720p | off |
+| Marketing video | 16:9 | 6-8s | 1080p | on |
+| Social (vertical) | 9:16 | 4-6s | 1080p | on |
+| Product showcase | 16:9 | 6-8s | 1080p | off |
+| Ambient loop | 16:9 | 4s | 720p | off |
+
+---
+
+Remember: Veo is a cinematographer awaiting direction. Speak its language—camera, light, motion, material—and it delivers frames worth remembering. Mumble vague requests and receive forgettable footage. The prompt IS the direction. Make it count.
