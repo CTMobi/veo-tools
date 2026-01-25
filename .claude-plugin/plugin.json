@@ -1,19 +1,5 @@
 {
   "name": "veo-tools",
   "description": "AI video generation skills for Google Veo 3 - generate cinematic videos, configure GCP, and create seamless loops",
-  "version": "1.0.0",
-  "skills": [
-    {
-      "name": "veo",
-      "path": "skills/veo/SKILL.md"
-    },
-    {
-      "name": "veo-setup",
-      "path": "skills/veo-setup/SKILL.md"
-    },
-    {
-      "name": "video-loop",
-      "path": "skills/video-loop/SKILL.md"
-    }
-  ]
+  "version": "1.0.0"
 }
