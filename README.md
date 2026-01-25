@@ -2,6 +2,39 @@
 
 Generate cinematic video content using Google Veo 3.1 via Vertex AI. Optimized for website hero backgrounds, marketing materials, and ambient looping visuals.
 
+## Example Output
+
+### Single-Shot: Hero Background Loop
+
+A seamless looping abstract background for website hero sections.
+
+[![Hero Loop Example](docs/thumbnails/hero-loop.jpg)](https://github.com/kdowswell/veo-tools/releases/latest/download/hero-loop.mp4)
+
+*Click to download video*
+
+### Multi-Shot: Marketing Launch Video
+
+A 4-shot promotional video assembled from individually generated clips using `/veo-multi-shot`.
+
+[![Multi-Shot Assembled](docs/thumbnails/multi-shot-assembled.jpg)](https://github.com/kdowswell/veo-tools/releases/latest/download/dataflow-launch-assembled.mp4)
+
+*Click to download video*
+
+<details>
+<summary>View individual shots</summary>
+
+| Shot 1: Teaser | Shot 2: Reveal |
+|:---:|:---:|
+| [![Shot 1](docs/thumbnails/shot-01-teaser.jpg)](https://github.com/kdowswell/veo-tools/releases/latest/download/shot-01-teaser.mp4) | [![Shot 2](docs/thumbnails/shot-02-reveal.jpg)](https://github.com/kdowswell/veo-tools/releases/latest/download/shot-02-reveal.mp4) |
+
+| Shot 3: Detail | Shot 4: Context |
+|:---:|:---:|
+| [![Shot 3](docs/thumbnails/shot-03-detail.jpg)](https://github.com/kdowswell/veo-tools/releases/latest/download/shot-03-detail.mp4) | [![Shot 4](docs/thumbnails/shot-04-context.jpg)](https://github.com/kdowswell/veo-tools/releases/latest/download/shot-04-context.mp4) |
+
+</details>
+
+---
+
 ## Installation
 
 ### Option 1: Plugin Marketplace (Recommended)
