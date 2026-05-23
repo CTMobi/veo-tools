@@ -1,7 +1,7 @@
 # Veo Foundation — Design Spec
 
 **Date**: 2026-05-23
-**Status**: Approved (pending user review)
+**Status**: Proposed (under review)
 **Scope**: Foundation sub-project (1 of 5 in the Veo improvements roadmap)
 **Authors**: Giuseppe Iuculano + Claude
 
@@ -15,7 +15,7 @@ The `veo-tools` plugin currently exposes a 6-phase workflow for Google Veo 3.1 v
 - Missing API parameters: `negativePrompt`, `enhancePrompt`, `storageUri`, `personGeneration`
 - Missing models: Veo 3.1 Lite, Veo 3 stable, Veo 2
 - Missing resolution: 4K
-- Audio nativo treated as second-class (default off, no prompt guidance) despite being a killer feature of Veo 3+
+- Audio native treated as second-class (default off, no prompt guidance) despite being a killer feature of Veo 3+
 - No cross-parameter validation (e.g., 1080p requires duration=8)
 - Code duplication between `veo-generate.ts` and `veo-multi-generate.ts` blocking new skills
 
@@ -63,7 +63,7 @@ Foundation is the enabling block: all four downstream sub-projects depend on the
 - Zero regression on existing workflows: every prompt that works today must still work after Foundation.
 - Foundation must reduce per-script line count from ~600 to <150 by extracting shared code (target aligned with Success criteria).
 - New skills (`/veo-animate` etc.) must be implementable by writing only a CLI + workflow, not new auth/polling/validation code.
-- Audio nativo becomes a first-class option when use case warrants it, never silently lost when use case warrants it.
+- Audio native becomes a first-class option when use case warrants it, never silently lost when use case warrants it.
 
 **Non-goals**
 - Multi-provider abstraction (no Veo-vs-other-model swap layer).
@@ -82,7 +82,7 @@ skills/
       api.ts                        # makeRequest, downloadFile, polling
       generate.ts                   # generateVideo(config) — unified entry
       validation.ts                 # validateConfig(config) — cross-parameter rules
-      pricing.ts                    # estimateCost(config) per model × resolution × duration × audio
+      pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
       types.ts                      # VeoConfig, GenerationResult, InputMode, ValidationResult, ImageInput
       image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
       constants.ts                  # MODELS, REGIONS, MAX_TOKENS, MAX_REFERENCE_IMAGES
@@ -144,7 +144,7 @@ CLI (veo-generate.ts)
 | `personGeneration` | enum | `allow_all` \| `allow_adult` \| `dont_allow` | model/region default | Regional restrictions apply (EU/UK/CH/MENA) |
 | `seed` | integer | 0–2^31 | random | Already present; documentation notes determinism is best-effort on Veo 3 |
 | `resolution` | enum | + `4k` added to existing `720p`, `1080p` | `720p` | 4K requires `duration=8` |
-| `model` | enum | expanded list (see below) | `veo-3.1-generate-preview` (pending empirical verification) | |
+| `model` | enum | expanded list (see below) | `veo-3.1-generate-preview` (latest generation; falls back to `veo-3.0-generate-001` if unavailable — see selection rule below) | |
 
 #### Model expansion
 
@@ -157,7 +157,39 @@ CLI (veo-generate.ts)
 | `veo-3.0-fast-generate-001` | Veo 3 fast stable | Production fast iteration | yes | 4K |
 | `veo-2.0-generate-001` | Veo 2 | Silent video, multi-sample | **no** | 720p |
 
-The current default `veo-3.1-generate-001` does not appear in official docs and may be invalid. Foundation includes empirical verification: during implementation, test which IDs return successfully from `predictLongRunning`. Default falls back to the most-recent confirmed-working ID, with preference for stable over preview when both work.
+The current default `veo-3.1-generate-001` does not appear in official docs and may be invalid. Foundation includes empirical verification: during implementation, test which IDs return successfully from `predictLongRunning`.
+
+**Default model selection rule** (final): prefer the **latest generation** that works (currently Veo 3.1 preview) so users get access to newest features by default. If the latest preview is unavailable for a given account/region, fall back to the latest stable variant (`veo-3.0-generate-001`). This means the default is `veo-3.1-generate-preview` if accessible, else `veo-3.0-generate-001`. Stable preference applies *within the same generation*, not across generations.
+
+#### `VeoConfig` type schema — forward declarations
+
+To prevent every downstream sub-project from modifying Foundation's type definitions, the `VeoConfig` interface in `types.ts` declares **all known Veo API input fields as optional from day one**, even those Foundation doesn't validate or consume:
+
+```typescript
+export interface VeoConfig {
+  // Foundation-owned (validated and consumed here)
+  prompt: string
+  model?: string
+  aspectRatio?: '16:9' | '9:16'
+  durationSeconds?: 4 | 6 | 8
+  resolution?: '720p' | '1080p' | '4k'
+  generateAudio?: boolean
+  sampleCount?: number
+  seed?: number
+  negativePrompt?: string
+  enhancePrompt?: boolean
+  storageUri?: string
+  personGeneration?: 'allow_all' | 'allow_adult' | 'dont_allow'
+
+  // Forward-declared (validation/semantics added by sub-projects)
+  image?: ImageInput              // /veo-animate
+  lastFrame?: ImageInput          // /veo-interpolate
+  referenceImages?: ImageInput[]  // /veo-multi-shot v2
+  videoExtensionInput?: string    // /veo-extend (operation name or GCS uri)
+}
+```
+
+Foundation's `validateConfig()` ignores the forward-declared fields. Each sub-project adds rules via `registerRule()` (see §3) without modifying `VeoConfig`.
 
 #### CLI flags added
 
@@ -225,7 +257,7 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 | 1 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
 | 2 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
 | 3 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
-| 4 | `prompt.tokens > 1024` (approx: chars / 3.5) | "Prompt exceeds 1024 tokens" | Foundation |
+| 4 | `prompt.tokens > 1024` (approx: chars / 3.5 for Latin-script; see note below) | **Warning** when estimated tokens > 900 (soft); **Reject** only when estimated > 1024 (hard ceiling) — see token counting note | Foundation |
 | 5 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #2 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
 | 6 | `sampleCount ∈ [1, model-max]` (see Open Question #4) | "sampleCount out of range for selected model" | Foundation |
 | 7 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
@@ -342,7 +374,7 @@ Plugin version in `.claude-plugin/plugin.json` bumps minor (0.x → 0.(x+1).0). 
 const PRICING = { ... } as const
 ```
 
-The source URL and review-on-release invariant are encoded as file-level comments. Pricing is a manually-maintained lookup table per model × resolution × audio. Estimate displayed in Phase 4 PRESENT with breakdown.
+The source URL and review-on-release invariant are encoded as file-level comments. Pricing is a manually-maintained lookup table keyed by `model × resolution × duration × audio × sampleCount`. Since users pay per generated video, `sampleCount` is a strict multiplier in the final estimate. Estimate displayed in Phase 4 PRESENT with breakdown.
 
 Automatic pricing-API integration is out of scope; pricing remains manual until enough churn justifies automation.
 
@@ -362,7 +394,7 @@ To prevent 4 downstream sub-projects from each forking the pricing table or mode
 Run on every PR; mock or pure functions only.
 
 - `validation.test.ts` — every rule in §3 with valid + invalid input
-- `pricing.test.ts` — full matrix model × resolution × duration × audio
+- `pricing.test.ts` — full matrix model × resolution × duration × audio × sampleCount
 - `audio-default.test.ts` — use-case → audio default table from §2
 - `auto-fix.test.ts` — every auto-correction produces expected message + corrected config
 - `model-routing.test.ts` — given use case + speed intent, suggested model is the documented one
@@ -390,12 +422,12 @@ At each release, the maintainer re-reads the official pricing URL and confirms t
 
 1. **Default model ID**: `veo-3.1-generate-001` (current) vs `veo-3.1-generate-preview` (docs) — to be resolved empirically during implementation. If both work, prefer current for backwards compatibility; if only one works, choose that.
 2. **Region detection**: rule #5 (`personGeneration` regional restriction) requires knowing the user's region for proactive auto-fix. Resolution: Foundation reads `VEO_REGION` env var (values: `us`, `eu`, `uk`, `ch`, `mena`, `other`). If set, auto-fix applies proactively in Phase 4 PRESENT. If unset, no auto-fix; the API error (if any) is surfaced verbatim in Phase 5 GENERATE. This eliminates the contradiction between proactive auto-fix and "delegate to API error" — both paths exist and the env var decides which.
-3. **Token counting**: Foundation uses `chars / 3.5` approximation for rule #4. Accurate counting requires an extra API call; deferred to future iteration unless this rule fires often in practice.
+3. **Token counting** (rule #4): `chars / 3.5` is a Latin-script heuristic. For CJK languages (Chinese, Japanese, Korean) one character often maps to multiple tokens, so the heuristic significantly **underestimates** token count and risks letting prompts through that the API later rejects. For non-Latin scripts (Cyrillic, Arabic, Hebrew, Devanagari) the ratio also differs. Foundation mitigation: (a) rule #4 acts as a **soft warning** at >900 estimated tokens, **hard reject** only at >1024 estimated; (b) for prompts with significant CJK content (detected via Unicode range scan), the heuristic switches to `chars / 1.5` (rough average) and the warning surfaces a note that the estimate is approximate; (c) if Phase 5 returns an API-side token error, the error is surfaced verbatim and tagged for the maintainer to revisit the heuristic. Accurate token counting via an extra API call remains deferred until evidence justifies it.
 4. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
 
 ## Risks & contingency
 
-**Scope risk — Foundation accorpa 3 concern**: refactor lib, params+models+validation, audio context-aware system. Agent review flagged this as a possible scope-creep risk. Mitigation: if during implementation any of these sub-systems drifts past the planned size (e.g., audio context-aware requires more workflow rewriting than estimated), the implementer is authorized to split Foundation into two PRs without re-running this brainstorming step:
+**Scope risk — Foundation bundles 3 concerns**: refactor lib, params+models+validation, audio context-aware system. Agent review flagged this as a possible scope-creep risk. Mitigation: if during implementation any of these sub-systems drifts past the planned size (e.g., audio context-aware requires more workflow rewriting than estimated), the implementer is authorized to split Foundation into two PRs without re-running this brainstorming step:
 
 - **Foundation-A**: shared lib refactor + cross-cutting parameters + validation + image plumbing + 4K + model expansion. *Unblocks all four downstream sub-projects.*
 - **Foundation-B**: audio context-aware default + audio lexicon + Phase 1/2/3 workflow rewrites. *Can ship in parallel with `/veo-animate` or `/veo-interpolate`.*
