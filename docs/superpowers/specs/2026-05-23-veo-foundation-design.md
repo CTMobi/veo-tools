@@ -103,15 +103,17 @@ skills/
     SKILL.md                        # minimal update (params pass-through)
 ```
 
-The `_shared/` directory uses an underscore prefix so the Claude Code skill loader does not treat it as a skill (skill loader scans `*/SKILL.md`). Each consuming skill references it via relative imports plus a tsconfig path mapping (`@veo-core/*`) to keep imports readable and refactor-safe.
+The `_shared/` directory is excluded from skill discovery because it contains **no `SKILL.md`** — the Claude Code skill loader scans for `SKILL.md` files, not directory naming. The underscore prefix is a defensive convention (makes the intent visually obvious and avoids ambiguity with future loader rules), but the operative exclusion mechanism is the absence of `SKILL.md`. *To verify before implementation: confirm the current loader behavior in Claude Code; if loader rules ever change to scan by directory name, revisit.*
+
+Consuming skills reference `_shared/` via **relative imports** (e.g., `import { generateVideo } from '../../_shared/veo-core/generate'`). The original draft proposed a tsconfig path alias `@veo-core/*`, but the repository has no root `tsconfig.json` and the scripts run via `npx ts-node` without `--project`, so path aliases wouldn't resolve reliably. Relative imports are chosen for Foundation. If later sub-projects need cleaner imports, the team can introduce a root `tsconfig.json` + `TS_NODE_PROJECT` env var as a follow-up.
 
 ### Module boundaries
 
 | Module | Public API | Internal |
 |---|---|---|
 | `auth.ts` | `getAccessToken(): string` | gcloud CLI invocation, error normalization |
-| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(url, path, token): Promise<void>` | URL building, HTTPS request handling, redirect following |
-| `generate.ts` | `generateVideo(config: VeoConfig, outputPath: string): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → download |
+| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(url, path, token): Promise<void>` | URL building, HTTPS request handling, redirect following, **explicit HTTP status validation** (non-2xx/3xx → throw with status + body), partial-file cleanup on error |
+| `generate.ts` | `generateVideo(config: VeoConfig, outputPath?: string): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). `outputPath` is required only when `storageUri` is unset. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
 | `image-helpers.ts` | `validateImage(input: ImageInput)`, `encodeImageBase64(path)`, `uploadImageToGcs(path, gcsUri)` | MIME sniffing, file I/O, GCS API |
@@ -123,14 +125,20 @@ The `_shared/` directory uses an underscore prefix so the Claude Code skill load
 ```
 CLI (veo-generate.ts)
   └─> parseArgs → VeoConfig
-        └─> generateVideo(config, outputPath)
+        └─> generateVideo(config, outputPath?)
               ├─> validateConfig(config) → may throw or auto-fix
               ├─> getAccessToken()
               ├─> submitGeneration(config, token) → operationName
               ├─> pollOperation(operationName, token) → status
-              └─> downloadFile(status.videoUrl, outputPath, token)
-        └─> GenerationResult
+              └─> if config.storageUri:
+              │     skip downloadFile — video already on GCS at storageUri
+              │   else:
+              │     downloadFile(status.videoUrl, outputPath, token)
+              │       └─> validate HTTP status; throw on non-2xx/3xx
+        └─> GenerationResult (videoPath set when downloaded; gcsUri set when storageUri used)
 ```
+
+When `storageUri` is set, `outputPath` is ignored and `GenerationResult.gcsUri` carries the final location; `videoPath` is `undefined`. When `storageUri` is unset, the inverse holds. The CLI errors out if neither is provided.
 
 ## Detailed design
 
@@ -171,7 +179,7 @@ export interface VeoConfig {
   prompt: string
   model?: string
   aspectRatio?: '16:9' | '9:16'
-  durationSeconds?: 4 | 6 | 8
+  durationSeconds?: number        // Foundation enforces {4,6,8} via validation; sub-projects (e.g., /veo-extend) may allow larger values
   resolution?: '720p' | '1080p' | '4k'
   generateAudio?: boolean
   sampleCount?: number
@@ -235,10 +243,10 @@ Audio Layer = at least one of:
 2. **SFX** — explicit sonic events: `metallic click, shattering glass`
 3. **Ambient** — soundscape: `wind through pines, distant ocean echo`
 
-Anti-patterns rejected by Phase 3 VALIDATE:
-- Audio on but no audio descriptors in prompt → warning
-- Comic-book onomatopoeia (`BAM!`, `WHOOSH!`) → rejected; suggest realistic description
-- Dialogue without quotes → rejected
+Anti-patterns in Phase 3 VALIDATE:
+- Audio on but no audio descriptors in prompt → **warning**
+- Comic-book onomatopoeia (`BAM!`, `WHOOSH!`) → **warning** with suggestion to swap for Foley-style description (e.g., `metallic clang, dust settling`). Not rejected, since Veo 3+ may interpret onomatopoeia as legitimate SFX cues; we surface a softer recommendation instead.
+- Dialogue without quotes → **warning** (downgraded from reject to align with the rest of Phase 3 softening; users may want stylized speech)
 
 New file `skills/veo/references/audio-lexicon.md` contains:
 - Professional SFX vocabulary (Foley terms)
@@ -360,7 +368,7 @@ Shall I generate?
 | New `validateConfig()` rules with auto-fix | No | Auto-fix is additive; rejects only what API would reject anyway |
 | Extended `VeoConfig` type | No | All new fields optional |
 
-Plugin version in `.claude-plugin/plugin.json` bumps minor (0.x → 0.(x+1).0). New `CHANGELOG.md` documents each behavioral change.
+Plugin version in `.claude-plugin/plugin.json` is currently `1.0.0`. Foundation bumps it to `1.1.0` (semver minor — additive backwards-compatible features). The two behavioral changes (audio default, model ID resolution) are minor under semver because both have explicit override flags that restore prior behavior. New `CHANGELOG.md` (Keep-a-Changelog format) documents each change.
 
 ### 6. Pricing strategy
 
@@ -389,9 +397,20 @@ To prevent 4 downstream sub-projects from each forking the pricing table or mode
 
 ## Testing strategy
 
+### Test runner + CI setup (prerequisite)
+
+The repository currently has **no test runner, no `.github/workflows/`, and no existing test suite**. Foundation must introduce these before unit tests are meaningful as a quality gate. Concretely:
+
+- **Test runner**: add `vitest` (TypeScript-native, no transpile step, ESM-friendly) as a devDependency. Lightweight enough to fit a plugin that previously had no build infrastructure.
+- **`package.json`**: introduce at repo root with `devDependencies: { vitest, typescript, @types/node }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`.
+- **CI workflow**: add `.github/workflows/test.yml` running `npm ci && npm test` on pull requests against `main`. No deployment, no integration with paid APIs (those remain manual per release checklist).
+- **No CI for billed integration tests**: the manual release checklist (paid, ~$X per round) is explicitly out of CI scope; it runs once before merge by the maintainer.
+
+This wiring is part of Foundation, not deferred — without it, the unit tests below are aspirational rather than enforced.
+
 ### Unit tests (free, deterministic)
 
-Run on every PR; mock or pure functions only.
+Run on every PR via the new CI workflow; mock or pure functions only.
 
 - `validation.test.ts` — every rule in §3 with valid + invalid input
 - `pricing.test.ts` — full matrix model × resolution × duration × audio × sampleCount
@@ -421,8 +440,29 @@ At each release, the maintainer re-reads the official pricing URL and confirms t
 ## Open questions
 
 1. **Default model ID**: `veo-3.1-generate-001` (current) vs `veo-3.1-generate-preview` (docs) — to be resolved empirically during implementation. If both work, prefer current for backwards compatibility; if only one works, choose that.
-2. **Region detection**: rule #5 (`personGeneration` regional restriction) requires knowing the user's region for proactive auto-fix. Resolution: Foundation reads `VEO_REGION` env var (values: `us`, `eu`, `uk`, `ch`, `mena`, `other`). If set, auto-fix applies proactively in Phase 4 PRESENT. If unset, no auto-fix; the API error (if any) is surfaced verbatim in Phase 5 GENERATE. This eliminates the contradiction between proactive auto-fix and "delegate to API error" — both paths exist and the env var decides which.
-3. **Token counting** (rule #4): `chars / 3.5` is a Latin-script heuristic. For CJK languages (Chinese, Japanese, Korean) one character often maps to multiple tokens, so the heuristic significantly **underestimates** token count and risks letting prompts through that the API later rejects. For non-Latin scripts (Cyrillic, Arabic, Hebrew, Devanagari) the ratio also differs. Foundation mitigation: (a) rule #4 acts as a **soft warning** at >900 estimated tokens, **hard reject** only at >1024 estimated; (b) for prompts with significant CJK content (detected via Unicode range scan), the heuristic switches to `chars / 1.5` (rough average) and the warning surfaces a note that the estimate is approximate; (c) if Phase 5 returns an API-side token error, the error is surfaced verbatim and tagged for the maintainer to revisit the heuristic. Accurate token counting via an extra API call remains deferred until evidence justifies it.
+2. **Region detection**: rule #5 (`personGeneration` regional restriction) requires knowing the user's region for proactive auto-fix. Resolution is **two-tier**:
+
+   - **Tier 1 — explicit `VEO_REGION` env var**: values `us`, `eu`, `uk`, `ch`, `mena`, `other`. Highest priority.
+   - **Tier 2 — inferred from `GOOGLE_CLOUD_LOCATION`** (already used for Vertex AI endpoint URL). Mapping in `constants.ts`:
+     - `us-*`, `northamerica-*` → `us`
+     - `europe-*` → `eu` (further split into `uk` if `europe-west2`, `ch` if `europe-west6`)
+     - `me-*` → `mena`
+     - `asia-*`, `australia-*`, `southamerica-*` → `other`
+   - If neither is set or the inference yields no match, auto-fix is skipped and the API error (if any) is surfaced verbatim in Phase 5 GENERATE.
+
+   The inference is best-effort — users with multi-region setups can override via `VEO_REGION`.
+3. **Token counting** (rule #4): heuristic varies by script. Foundation uses per-script multipliers detected via Unicode range scan, with conservative defaults to avoid underestimation:
+
+   | Script range | Ratio (chars per token) | Notes |
+   |---|---|---|
+   | Latin (default) | 3.5 | Tuned for English; reasonable for most Western languages |
+   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 1.5 | Each character often = multiple tokens |
+   | Cyrillic (`Ѐ–ӿ`) | 2.0 | Conservative; varies by word morphology |
+   | Arabic (`؀–ۿ`) | 2.0 | Conservative |
+   | Hebrew (`֐–׿`) | 2.0 | Conservative |
+   | Devanagari (`ऀ–ॿ`) | 1.8 | Conservative for Hindi/Sanskrit |
+
+   Detection: count chars per script; the dominant range determines the multiplier (>30% threshold). Mixed prompts default to the most restrictive multiplier among present scripts. Mitigation tiers: (a) rule #4 acts as a **soft warning** at >900 estimated tokens, **hard reject** only at >1024 estimated; (b) when a non-Latin multiplier is used, the warning notes "estimate approximate for non-Latin content"; (c) Phase 5 API-side token errors are surfaced verbatim and tagged for the maintainer to revisit the ratios. Accurate token counting via an extra API call remains deferred until evidence justifies it.
 4. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
 
 ## Risks & contingency
@@ -436,27 +476,29 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
-2. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
-3. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
-4. Refactor `skills/veo-multi-shot/scripts/veo-multi-generate.ts` similarly.
-5. Add new cross-cutting parameters + CLI flags to `_shared` and `veo-generate.ts`.
-6. Implement `validation.ts` with Foundation rules (#1–#7) and the `registerRule()` API for future sub-project rules.
-7. Implement `pricing.ts` with verified table + dated header.
-8. Empirical verification of Open Questions #1 (default model ID) and #4 (`sampleCount` per model); update `constants.ts`.
-9. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table.
-10. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
-11. Write `skills/veo/references/audio-lexicon.md`.
-12. Update `skills/veo/examples/` with audio prompt examples.
-13. Write `CHANGELOG.md` documenting behavioral changes.
-14. Run manual integration checklist; record results in PR.
+1. **Test infrastructure**: add root `package.json` with `vitest`, `typescript`, `@types/node` devDeps; add `.github/workflows/test.yml` running tests on PR. Verify a trivial test passes in CI before proceeding.
+2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
+3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
+4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
+5. Refactor `skills/veo-multi-shot/scripts/veo-multi-generate.ts` similarly.
+6. Add new cross-cutting parameters + CLI flags to `_shared` and `veo-generate.ts`.
+7. Implement `validation.ts` with Foundation rules (#1–#7) and the `registerRule()` API for future sub-project rules.
+8. Implement `pricing.ts` with verified table + dated header.
+9. Empirical verification of Open Questions #1 (default model ID) and #4 (`sampleCount` per model); update `constants.ts`.
+10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table.
+11. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
+12. Write `skills/veo/references/audio-lexicon.md`.
+13. Update `skills/veo/examples/` with audio prompt examples.
+14. Write `CHANGELOG.md` documenting behavioral changes; bump `plugin.json` version 1.0.0 → 1.1.0.
+15. Run manual integration checklist; record results in PR.
 
 ## Success criteria
 
 - All existing `veo-generate.ts` example invocations from current README still succeed with identical output (modulo audio default change — explicitly documented).
 - `wc -l skills/veo/scripts/veo-generate.ts` < 150 lines after refactor (was 595).
 - `wc -l skills/veo-multi-shot/scripts/veo-multi-generate.ts` < 150 lines after refactor.
-- 100% of rules in §3 have unit tests.
+- CI workflow runs on PR and fails when any unit test fails.
+- 100% of rules in §3 have unit tests; `vitest` reports pass on a clean checkout.
 - Manual integration checklist passes 8/8.
 - `/veo` SKILL.md documents every new parameter with at least one example.
 - A subsequent sub-project (e.g., `/veo-animate`) can be added by creating only a new skill folder + thin CLI, importing all infrastructure from `_shared/veo-core/`.
