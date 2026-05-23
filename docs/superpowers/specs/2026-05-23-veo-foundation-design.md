@@ -19,15 +19,17 @@ The `veo-tools` plugin currently exposes a 6-phase workflow for Google Veo 3.1 v
 - No cross-parameter validation (e.g., 1080p requires duration=8)
 - Code duplication between `veo-generate.ts` and `veo-multi-generate.ts` blocking new skills
 
-The full roadmap (chosen Approach A — staged by capability) is decomposed into 5 sub-projects:
+The full roadmap (chosen Approach A — staged by capability) is decomposed into 5 sub-projects with the following execution order:
 
-1. **Foundation** *(this spec)* — shared library + cross-cutting parameters + audio context-aware + validation
-2. `/veo-animate` — image-to-video
-3. `/veo-interpolate` — first frame + last frame
-4. `/veo-extend` — video extension up to ~148s
-5. `/veo-multi-shot v2` — integrate `referenceImages` for character/product consistency
+1. **Foundation** *(this spec)* — shared library + cross-cutting parameters + audio context-aware + validation + image input plumbing
+2. **`/veo-animate`** — image-to-video (first frame). *In parallel with #3 after Foundation.*
+3. **`/veo-interpolate`** — first frame + last frame. *In parallel with #2 after Foundation.*
+4. **`/veo-multi-shot v2`** — `referenceImages` integration. *Parallel with #2/#3 after Foundation.*
+5. **`/veo-extend`** — video extension up to ~148s. *Serialized after #2/#3* because its operation-chain semantics are the riskiest and benefit from stabilized image-input code (rationale from agent review).
 
-Foundation is the enabling block: the other four sub-projects depend on the shared library and parameters defined here.
+Foundation is the enabling block: all four downstream sub-projects depend on the shared library, parameters, and image input plumbing defined here.
+
+**Closed scope decisions (not in roadmap)**: Vertex AI "insert objects" / "remove objects" / upscaling are formally **out of roadmap**. Demand-gated future work, not a deferred sub-project. This is recorded here so planning doesn't carry ambiguity forward.
 
 ## Scope
 
@@ -44,6 +46,7 @@ Foundation is the enabling block: the other four sub-projects depend on the shar
 - Update `validation/prompt-checklist.md` to remove obsolete rules (e.g., text rejection now nuanced)
 - New reference file `references/audio-lexicon.md`
 - CHANGELOG.md (new file)
+- **Shared image input plumbing** (`types.ts` defines `ImageInput`; `image-helpers.ts` does MIME validation, base64 encoding, optional GCS upload). Foundation ships these even though no Foundation parameter consumes them, because sub-projects `/veo-animate`, `/veo-interpolate`, and `/veo-multi-shot v2` all need them — and we want to avoid each sub-project reinventing the plumbing.
 
 ### Out of scope
 
@@ -58,7 +61,7 @@ Foundation is the enabling block: the other four sub-projects depend on the shar
 
 **Goals**
 - Zero regression on existing workflows: every prompt that works today must still work after Foundation.
-- Foundation must reduce per-script line count from ~600 to ~80 by extracting shared code.
+- Foundation must reduce per-script line count from ~600 to <150 by extracting shared code (target aligned with Success criteria).
 - New skills (`/veo-animate` etc.) must be implementable by writing only a CLI + workflow, not new auth/polling/validation code.
 - Audio nativo becomes a first-class option when use case warrants it, never silently lost when use case warrants it.
 
@@ -80,12 +83,13 @@ skills/
       generate.ts                   # generateVideo(config) — unified entry
       validation.ts                 # validateConfig(config) — cross-parameter rules
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio
-      types.ts                      # VeoConfig, GenerationResult, InputMode, ValidationResult
+      types.ts                      # VeoConfig, GenerationResult, InputMode, ValidationResult, ImageInput
+      image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
       constants.ts                  # MODELS, REGIONS, MAX_TOKENS, MAX_REFERENCE_IMAGES
       tsconfig.json                 # ES target, paths
   veo/
     scripts/
-      veo-generate.ts               # thin CLI wrapper (~80 lines, was 595)
+      veo-generate.ts               # thin CLI wrapper (<150 lines, was 595)
     SKILL.md                        # updated with new params + audio context-aware
     references/
       cinematography-lexicon.md     # existing
@@ -110,6 +114,7 @@ The `_shared/` directory uses an underscore prefix so the Claude Code skill load
 | `generate.ts` | `generateVideo(config: VeoConfig, outputPath: string): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → download |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
+| `image-helpers.ts` | `validateImage(input: ImageInput)`, `encodeImageBase64(path)`, `uploadImageToGcs(path, gcsUri)` | MIME sniffing, file I/O, GCS API |
 | `types.ts` | exports type definitions only | — |
 | `constants.ts` | exports frozen objects/arrays | — |
 
@@ -147,7 +152,7 @@ CLI (veo-generate.ts)
 |---|---|---|---|---|
 | `veo-3.1-generate-preview` | Veo 3.1 quality (preview) | Default quality | yes | 4K |
 | `veo-3.1-fast-generate-preview` | Veo 3.1 fast | Fast iteration | yes | 4K |
-| `veo-3.1-lite-generate-preview` | Veo 3.1 lite | Lowest cost, text/image-to-video only | yes | 1080p |
+| `veo-3.1-lite-generate-preview` | Veo 3.1 lite | Lowest cost. Supports text-to-video (in scope here) and image-to-video (added by `/veo-animate`). No `referenceImages`, no video extension. | yes | 1080p |
 | `veo-3.0-generate-001` | Veo 3 stable | Production with audio | yes | 4K |
 | `veo-3.0-fast-generate-001` | Veo 3 fast stable | Production fast iteration | yes | 4K |
 | `veo-2.0-generate-001` | Veo 2 | Silent video, multi-sample | **no** | 720p |
@@ -213,20 +218,24 @@ New file `skills/veo/references/audio-lexicon.md` contains:
 
 `validation.ts` centralizes API constraint validation, separate from prompt-quality rules (which remain in `validation/prompt-checklist.md`).
 
-| # | Rule | Error if violated |
-|---|---|---|
-| 1 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" |
-| 2 | `referenceImages` present ⇒ `durationSeconds == 8` | "Reference images require duration=8" |
-| 3 | `lastFrame` present ⇒ `durationSeconds == 8` AND `image` present | "Interpolation requires both image and lastFrame, duration=8" |
-| 4 | Video extension ⇒ `resolution == 720p` | "Video extension only supports 720p" |
-| 5 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" |
-| 6 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" |
-| 7 | `model ∈ veo-3.1-lite-*` ⇒ no `referenceImages`, no extension | "Lite model doesn't support reference images or extension" |
-| 8 | `referenceImages.length ∈ [1, 3]` | "Reference images must be 1-3" |
-| 9 | `prompt.tokens > 1024` (approx: chars / 3.5) | "Prompt exceeds 1024 tokens" |
-| 10 | `personGeneration == allow_all` in EU/UK/CH/MENA region | Auto-correct + warning: "Region restriction: falling back to allow_adult" |
-| 11 | `sampleCount ∈ [1, model-max]` (see Open Questions) | "sampleCount out of range for selected model" |
-| 12 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" |
+Foundation only validates parameters that Foundation introduces. Rules covering input modalities (`image`, `lastFrame`, `referenceImages`, video extension) are **added by the sub-projects that own those parameters** — they appear in this table only as forward references, not as Foundation deliverables.
+
+| # | Rule | Error if violated | Owned by |
+|---|---|---|---|
+| 1 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
+| 2 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
+| 3 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
+| 4 | `prompt.tokens > 1024` (approx: chars / 3.5) | "Prompt exceeds 1024 tokens" | Foundation |
+| 5 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #2 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
+| 6 | `sampleCount ∈ [1, model-max]` (see Open Question #4) | "sampleCount out of range for selected model" | Foundation |
+| 7 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
+| F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
+| F2 | `lastFrame` present ⇒ `durationSeconds == 8` AND `image` present | — | `/veo-interpolate` |
+| F3 | Video extension input ⇒ `resolution == 720p` | — | `/veo-extend` |
+| F4 | `model ∈ veo-3.1-lite-*` ⇒ no `referenceImages`, no extension | — | `/veo-multi-shot v2` + `/veo-extend` |
+| F5 | `referenceImages.length ∈ [1, 3]` | — | `/veo-multi-shot v2` |
+
+The `validation.ts` rule registry is designed to accept additions: each sub-project adds its own rules without modifying Foundation rules. Foundation exposes a `registerRule(rule: ValidationRule)` API for this.
 
 #### Auto-corrections
 
@@ -284,9 +293,9 @@ Settings:
 
 Auto-adjustments applied:
   - Duration bumped 6→8s (required by 1080p)
-  - Audio Layer added: ambient soundscape
 
-Validation: PASSED (3 warnings)
+Validation: PASSED (2 warnings)
+  ⚠ Audio is on but prompt has no Audio Layer descriptors — consider adding dialogue/SFX/ambient
   ⚠ Use case "hero-background" but audio=on — sure?
 
 Cost estimate: ~$X.XX (Veo 3 quality, 8s, 1080p, audio)
@@ -337,6 +346,15 @@ The source URL and review-on-release invariant are encoded as file-level comment
 
 Automatic pricing-API integration is out of scope; pricing remains manual until enough churn justifies automation.
 
+#### Pricing & constants maintenance protocol
+
+To prevent 4 downstream sub-projects from each forking the pricing table or model constants list, Foundation establishes the following invariants:
+
+- **Single owner per release**: `pricing.ts` and `constants.ts` are owned by Foundation. Any sub-project that needs to add a model, cost vector, or constant lands a Foundation-touching change in its own PR, not an inline duplicate in its skill folder.
+- **Dated header is the audit trail**: every PR that touches `pricing.ts` updates the `// Last updated: YYYY-MM-DD` comment and the `// Source:` URL if applicable.
+- **No skill-local pricing**: skills must `import { estimateCost } from '@veo-core/pricing'`. Hardcoded `~$0.50` strings in SKILL.md examples are allowed (they're guidance), but generated cost estimates must come from `estimateCost()`.
+- **Release-time review**: at each plugin version bump, the maintainer re-validates `pricing.ts` against the current source URL and confirms the dated header.
+
 ## Testing strategy
 
 ### Unit tests (free, deterministic)
@@ -371,24 +389,35 @@ At each release, the maintainer re-reads the official pricing URL and confirms t
 ## Open questions
 
 1. **Default model ID**: `veo-3.1-generate-001` (current) vs `veo-3.1-generate-preview` (docs) — to be resolved empirically during implementation. If both work, prefer current for backwards compatibility; if only one works, choose that.
-2. **Region detection**: rule #10 requires knowing user's region. Options: explicit user flag (`--region eu`), env var (`VEO_REGION`), or omit and let API return the error. Foundation will use env var with fallback to relying on API error message — explicit detection is over-scope.
-3. **Token counting**: Foundation uses `chars / 3.5` approximation for rule #9. Accurate counting requires an extra API call; deferred to future iteration unless this rule fires often in practice.
+2. **Region detection**: rule #5 (`personGeneration` regional restriction) requires knowing the user's region for proactive auto-fix. Resolution: Foundation reads `VEO_REGION` env var (values: `us`, `eu`, `uk`, `ch`, `mena`, `other`). If set, auto-fix applies proactively in Phase 4 PRESENT. If unset, no auto-fix; the API error (if any) is surfaced verbatim in Phase 5 GENERATE. This eliminates the contradiction between proactive auto-fix and "delegate to API error" — both paths exist and the env var decides which.
+3. **Token counting**: Foundation uses `chars / 3.5` approximation for rule #4. Accurate counting requires an extra API call; deferred to future iteration unless this rule fires often in practice.
 4. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
+
+## Risks & contingency
+
+**Scope risk — Foundation accorpa 3 concern**: refactor lib, params+models+validation, audio context-aware system. Agent review flagged this as a possible scope-creep risk. Mitigation: if during implementation any of these sub-systems drifts past the planned size (e.g., audio context-aware requires more workflow rewriting than estimated), the implementer is authorized to split Foundation into two PRs without re-running this brainstorming step:
+
+- **Foundation-A**: shared lib refactor + cross-cutting parameters + validation + image plumbing + 4K + model expansion. *Unblocks all four downstream sub-projects.*
+- **Foundation-B**: audio context-aware default + audio lexicon + Phase 1/2/3 workflow rewrites. *Can ship in parallel with `/veo-animate` or `/veo-interpolate`.*
+
+The split is a contingency, not the default plan. Default is single PR. The implementer makes the call based on actual PR size when work is ~70% complete.
 
 ## Migration plan
 
-1. Create `skills/_shared/veo-core/` with extracted modules; no behavioral change yet.
-2. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
-3. Refactor `skills/veo-multi-shot/scripts/veo-multi-generate.ts` similarly.
-4. Add new parameters + CLI flags to `_shared` and `veo-generate.ts`.
-5. Implement `validateConfig()` with all rules from §3.
-6. Implement `pricing.ts` with verified table.
-7. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table.
-8. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
-9. Write `skills/veo/references/audio-lexicon.md`.
-10. Update `skills/veo/examples/` with audio prompt examples.
-11. Write `CHANGELOG.md` documenting behavioral changes.
-12. Run manual integration checklist; record results in PR.
+1. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
+2. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
+3. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
+4. Refactor `skills/veo-multi-shot/scripts/veo-multi-generate.ts` similarly.
+5. Add new cross-cutting parameters + CLI flags to `_shared` and `veo-generate.ts`.
+6. Implement `validation.ts` with Foundation rules (#1–#7) and the `registerRule()` API for future sub-project rules.
+7. Implement `pricing.ts` with verified table + dated header.
+8. Empirical verification of Open Questions #1 (default model ID) and #4 (`sampleCount` per model); update `constants.ts`.
+9. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table.
+10. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
+11. Write `skills/veo/references/audio-lexicon.md`.
+12. Update `skills/veo/examples/` with audio prompt examples.
+13. Write `CHANGELOG.md` documenting behavioral changes.
+14. Run manual integration checklist; record results in PR.
 
 ## Success criteria
 
