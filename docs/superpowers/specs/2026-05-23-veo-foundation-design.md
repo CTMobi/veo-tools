@@ -183,7 +183,7 @@ Rationale for choosing aliases over relative imports: we are already adding root
 | Module | Public API | Internal |
 |---|---|---|
 | `auth.ts` | `getAccessToken(): Promise<string>` | **Uses `google-auth-library`** npm package (not shelled-out `gcloud` CLI). Supports Service Accounts, ADC, and Workload Identity natively. Removes dependency on gcloud CLI being installed in the execution context — important for CI/CD and containerized usage. The previous `gcloud auth print-access-token` call in `veo-generate.ts` is replaced. |
-| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx) — and uses a **30-second total-request timeout** appropriate for short metadata calls. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 5**, validates non-2xx/3xx → throws with status + body, cleans up partial files on error; uses a **socket idle timeout of 30s** plus a **max total duration of 15 minutes** as a belt-and-suspenders guard against connections that keep sending bytes at near-zero throughput — neither limit alone protects against the other; **on each redirect, if the target origin differs from the current request's origin, the `Authorization` header is stripped before following** — where *origin* is `scheme + host + port` per RFC 6454, so HTTPS→HTTP redirects on the same host are cross-origin even though hostname matches — this prevents Vertex bearer tokens leaking to e.g. signed GCS URLs on `storage.googleapis.com`, which already carry their own auth and would also reject a bearer token) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
+| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx) — and uses a **30-second total-request timeout** appropriate for short metadata calls. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 10** — aligned with `follow-redirects` and `axios` defaults; CDN chains and GCS signed-URL flows can exceed 5; validates non-2xx/3xx → throws with status + body **capped at 1 KB** to prevent OOM if a misbehaving server returns a huge error payload; **writes to `${outputPath}.tmp` and atomically renames to `outputPath` only on full success**, so a crashed or killed process leaves a stranded `.tmp` instead of a corrupt final file; uses a **socket idle timeout of 30s** plus a **max total duration of 15 minutes** as a belt-and-suspenders guard against connections that keep sending bytes at near-zero throughput — neither limit alone protects against the other; **on each redirect, if the target origin differs from the current request's origin, the `Authorization` header is stripped before following** — where *origin* is `scheme + host + port` per RFC 6454, so HTTPS→HTTP redirects on the same host are cross-origin even though hostname matches — this prevents Vertex bearer tokens leaking to e.g. signed GCS URLs on `storage.googleapis.com`, which already carry their own auth and would also reject a bearer token; **HTTPS→HTTP redirects are rejected outright** regardless of header handling — the video payload itself is sensitive and must not transit cleartext even with credentials stripped) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
 | `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
@@ -424,8 +424,9 @@ export const MODEL_SUGGESTIONS: Record<string, { quality: string; fast: string; 
   //     content prefers reliability over latest features.
   //   - hero-background/ambient/loop include `lite` because high-volume hero/ambient
   //     loops on landing pages benefit from cost optimization; social does not
-  //     because lite is image-to-video only (not text-to-video) — out of scope for
-  //     pure social ad text generation.
+  //     because the social quality argument above already drives the choice toward
+  //     the preview model — lite is omitted on quality grounds, not capability
+  //     (Lite does support text-to-video; see the model expansion table in §1).
   'hero-background': { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
   'ambient':         { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
   'loop':            { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
@@ -437,6 +438,37 @@ export const MODEL_SUGGESTIONS: Record<string, { quality: string; fast: string; 
 ```
 
 Both tables are pure data — no logic. `audio-default.test.ts` and `model-routing.test.ts` (in the test plan) become straightforward asserts that the constants match the spec tables. SKILL.md Phase 1 conversational logic reads from these tables rather than hardcoding the values, preventing silent drift.
+
+#### `REGIONS` constant
+
+#### `MODEL_DURATIONS` and `MODEL_SAMPLE_MAX` shapes
+
+Two model-keyed constants drive rules #1 and #7. Both return `undefined` for unknown model keys (the `--model` escape valve case); rules skip with a soft warning when this happens — see rule descriptions in §3.
+
+```typescript
+export const MODEL_DURATIONS: ReadonlyMap<string, ReadonlySet<number>> = new Map([
+  ['veo-3.1-generate-preview',      new Set([4, 6, 8])],
+  ['veo-3.1-fast-generate-preview', new Set([4, 6, 8])],
+  ['veo-3.1-lite-generate-preview', new Set([4, 6, 8])],
+  ['veo-3.0-generate-001',          new Set([4, 6, 8])],
+  ['veo-3.0-fast-generate-001',     new Set([4, 6, 8])],
+  ['veo-2.0-generate-001',          new Set([5, 6, 7, 8])],   // PROVISIONAL — verify per Open Question #4
+])
+
+export const MODEL_SAMPLE_MAX: Readonly<Record<string, number>> = {
+  // PROVISIONAL — exact ceilings verified during the probe pass per Open Question #3.
+  // Defensive initial values: assume the documented "1 per request" for Veo 3+
+  // and the documented "up to 2" for Veo 2, until empirical verification.
+  'veo-3.1-generate-preview':      1,
+  'veo-3.1-fast-generate-preview': 1,
+  'veo-3.1-lite-generate-preview': 1,
+  'veo-3.0-generate-001':          1,
+  'veo-3.0-fast-generate-001':     1,
+  'veo-2.0-generate-001':          2,
+}
+```
+
+`ReadonlyMap` for `MODEL_DURATIONS` lets the consumer call `.has(model)` and `.get(model)?.has(value)` cleanly. `Record` for `MODEL_SAMPLE_MAX` is sufficient because the lookup is a single number, not a membership check.
 
 #### `REGIONS` constant
 
@@ -564,9 +596,9 @@ function buildRequestBody(c: VeoConfig) {
     instance.referenceImages = c.referenceImages.map(img => ({ image: encodeImage(img) }))
   }
   // NOTE: videoExtensionInput is intentionally NOT handled here. If callers pass it,
-  // `validateConfig` adds an explicit warning ("videoExtensionInput is not yet supported
-  // by Foundation; this field will be picked up when /veo-extend ships") so the field
-  // isn't silently ignored. The warning lands in GenerationResult.warnings.
+  // validation rule #10 (forward-declared field warning) emits a warning so the field
+  // isn't silently ignored, then this function drops it from the request body so the
+  // API receives a clean call. The warning lands in GenerationResult.warnings.
   // VeoConfig declares it for forward-compat (so /veo-extend doesn't have to modify Foundation
   // types), but the actual API field shape — gcsUri vs operationName vs other — is not yet
   // verified against Vertex AI. /veo-extend owns the implementation: it will add the
@@ -613,6 +645,7 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 | 5 | `prompt.tokens` estimated > `TOKEN_WARNING_THRESHOLD` (default `900`, in `constants.ts`; Latin-script approx: chars / 3.5; non-Latin multipliers per Open Question #2). Hard ceiling is `MAX_TOKENS` (`1024`) but enforcement is server-side. | **Warning only** at `> TOKEN_WARNING_THRESHOLD` estimated. **Never rejected client-side** — the Veo API has no `countTokens` endpoint (verified against Vertex AI / Gemini API / Veo model docs), so any local heuristic produces false positives. The API rejects oversize prompts immediately with a clear error before generation starts, which is surfaced verbatim in Phase 5. | Foundation |
 | 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #1 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
 | 7 | `sampleCount ∈ [1, model-max]` per `MODEL_SAMPLE_MAX[model]` (see Open Question #3). **Unknown model**: rule is **skipped** with a soft warning, same convention as rule #1. | "sampleCount out of range for selected model" | Foundation |
+| 10 | Forward-declared `VeoConfig` fields without Foundation-level semantics (currently `videoExtensionInput`; future additions inherit this rule automatically). If the field is set, validation emits a **warning** explaining it's declared on the type for cross-project compatibility but Foundation does not implement it — the owning sub-project will pick it up. The field is dropped from the request body so the API receives a clean call. | Warning: "<field> is declared on VeoConfig for forward-compat but Foundation does not implement it; the owning sub-project will." | Foundation |
 | 8 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
 | 9 | Exactly one of `outputPath` or `storageUri` must be set on `VeoConfig` | Neither set → "Output destination required: set `outputPath` or `storageUri`". Both set → "Ambiguous output: set either `outputPath` or `storageUri`, not both" | Foundation |
 | F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
@@ -626,7 +659,7 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 ```typescript
 type ValidationRule = (config: VeoConfig) => RuleResult  // RuleResult = ok | warning | error | autoFix
 
-export const FOUNDATION_RULES: ValidationRule[] = [/* rules #1–#9 */]
+export const FOUNDATION_RULES: ValidationRule[] = [/* rules #1–#10 */]
 
 export function createValidator(opts: {
   baseRules?: ValidationRule[]      // defaults to FOUNDATION_RULES
@@ -905,7 +938,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
 5. Refactor `skills/veo-multi-shot/scripts/veo-multi-generate.ts` similarly.
 6. Add new cross-cutting parameters + CLI flags to `_shared` and `veo-generate.ts`.
-7. Implement `validation.ts` with Foundation rules (#1–#9), exporting `FOUNDATION_RULES` array and the `createValidator({ baseRules, extraRules })` factory so sub-projects can compose their own validators without modifying Foundation.
+7. Implement `validation.ts` with Foundation rules (#1–#10), exporting `FOUNDATION_RULES` array and the `createValidator({ baseRules, extraRules })` factory so sub-projects can compose their own validators without modifying Foundation.
 8. Implement `pricing.ts` with verified table + dated header.
 9. Empirical verification of Open Questions #3 (`sampleCount` per model) and #4 (Veo 2 allowed durations); update `constants.ts`. Also: probe `AVAILABLE_MODELS` to confirm each documented ID accepts requests (rejects with sensible errors otherwise). **Budget warning**: this probe burns paid API credit — ~6 models × 3 sample counts × 4 durations ≈ 72 generations, at ~$2.50/gen ≈ $180. Run only when the rest of Foundation is solid enough that the probe results won't be invalidated by other changes. Record results in the PR (or a dedicated `docs/foundation-probe-results.md`) so future maintainers can re-run only the deltas.
 10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table. **Extend Phase 1 USE CASE enum** to: `hero-background | marketing | social | product | ambient | loop | storytelling` — adding `loop` and `storytelling` so the audio default table in §2 has exact 1:1 enum matches.
