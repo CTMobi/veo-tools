@@ -124,9 +124,26 @@ The bootstrap file solves both problems by registering `tsconfig-paths` programm
 ```typescript
 // skills/_shared/veo-core/bootstrap.ts
 import * as path from 'path'
+import * as fs from 'fs'
 import { register } from 'tsconfig-paths'
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')   // resolves to repo root from this file's location
+// Walk upward from this file looking for the repository root.
+// Markers: both package.json AND .git must be present — neither alone is sufficient
+// (a sub-package could have its own package.json; a submodule could have its own .git).
+// Robust against file relocation and future monorepo restructuring.
+function findRepoRoot(start: string): string {
+  let dir = start
+  while (dir !== path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, 'package.json')) &&
+        fs.existsSync(path.join(dir, '.git'))) {
+      return dir
+    }
+    dir = path.dirname(dir)
+  }
+  throw new Error('bootstrap.ts could not locate repo root from ' + start)
+}
+
+const REPO_ROOT = findRepoRoot(__dirname)
 
 register({
   baseUrl: REPO_ROOT,
@@ -227,16 +244,29 @@ export const DEFAULT_MODEL_CHAIN = [
   'veo-3.0-generate-001',
 ] as const
 
-// resolved at startup in generate.ts:
-function resolveDefaultModel(availableModels: Set<string>): string {
+export const AVAILABLE_MODELS: ReadonlySet<string> = new Set([
+  // Pinned empirically during Foundation implementation (see Open Questions #3, #4).
+  // Updates to this set go through a Foundation-touching PR per the maintenance protocol (§6).
+  'veo-3.1-generate-preview',
+  'veo-3.1-fast-generate-preview',
+  'veo-3.1-lite-generate-preview',
+  'veo-3.0-generate-001',
+  'veo-3.0-fast-generate-001',
+  'veo-2.0-generate-001',
+])
+
+// resolved once at module load in generate.ts:
+export function resolveDefaultModel(): string {
   for (const id of DEFAULT_MODEL_CHAIN) {
-    if (availableModels.has(id)) return id
+    if (AVAILABLE_MODELS.has(id)) return id
   }
-  throw new Error('No supported Veo model available')
+  throw new Error('No supported Veo model available in constants.AVAILABLE_MODELS')
 }
 ```
 
-The set of `availableModels` is populated empirically during implementation (per Open Question #3 / #4 probing) and pinned in `constants.ts`. At startup, the script resolves the default once; runtime invocations always use the resolved ID. No fallback on API error — if the chosen model returns 404/403 during generation, that's a real error surfaced verbatim, not a silent retry that doubles latency.
+The function takes **no parameter** — the lookup is purely against the static `AVAILABLE_MODELS` constant. This removes the previous ambiguity (a parameter named `availableModels` implied a runtime-computed set, contradicting "static" framing). Tests substitute the constant via `vi.mock('@veo-core/constants', ...)` to exercise edge cases (e.g., preview unavailable).
+
+`AVAILABLE_MODELS` is populated during Foundation implementation by empirically probing each documented model ID against the API. Once pinned, changes go through a Foundation-touching PR per the maintenance protocol (§6). Runtime invocations use the ID resolved at module load — there is no per-call retry on API error. If the chosen model returns 404/403 during generation, that's a real error surfaced verbatim.
 
 Users who hardcoded the legacy ID in their own scripts can continue to use it as an explicit `--model` value; Foundation just doesn't pick it as the default anymore.
 
@@ -332,6 +362,12 @@ New file `skills/veo/references/audio-lexicon.md` contains:
 Pseudocode shape (illustrative — implementation may differ):
 
 ```typescript
+// encodeImage returns a Vertex AI image object, NOT a bare string. Declaration in image-helpers.ts:
+//   function encodeImage(img: ImageInput):
+//     | { bytesBase64Encoded: string; mimeType: string }   // local file or buffer
+//     | { gcsUri: string; mimeType?: string }              // gs:// path
+// The Vertex API accepts either shape on `image` / `lastFrame` / `referenceImages[]`.
+
 function buildRequestBody(c: VeoConfig) {
   const instance: Record<string, unknown> = { prompt: c.prompt }
   if (c.image)               instance.image = encodeImage(c.image)
