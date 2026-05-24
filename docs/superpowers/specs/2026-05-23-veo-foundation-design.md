@@ -183,7 +183,7 @@ Rationale for choosing aliases over relative imports: we are already adding root
 | Module | Public API | Internal |
 |---|---|---|
 | `auth.ts` | `getAccessToken(): Promise<string>` | **Uses `google-auth-library`** npm package (not shelled-out `gcloud` CLI). Supports Service Accounts, ADC, and Workload Identity natively. Removes dependency on gcloud CLI being installed in the execution context — important for CI/CD and containerized usage. The previous `gcloud auth print-access-token` call in `veo-generate.ts` is replaced. |
-| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx). `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually, validates non-2xx/3xx → throws with status + body, cleans up partial files on error) and `gs://` (downloads via `@google-cloud/storage` client). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
+| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx). All HTTPS calls use an explicit **30-second per-request timeout** to avoid indefinite hangs. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 5**, validates non-2xx/3xx → throws with status + body, cleans up partial files on error) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
 | `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
@@ -207,7 +207,12 @@ CLI (veo-generate.ts)
               │     skip downloadFile — video already on GCS at storageUri
               │   else:
               │     downloadFile(status.videoUrl, config.outputPath, token)
-              │       └─> validate HTTP status; throw on non-2xx/3xx
+              │       └─> if target.startsWith('gs://'):
+              │             use @google-cloud/storage client to copy GCS object → local file
+              │           else (https://):
+              │             HTTPS request with 30s timeout; follow redirects (max 5);
+              │             validate non-2xx/3xx → throw with status + body;
+              │             cleanup partial file on error
         └─> GenerationResult (videoPath set when downloaded; gcsUri set when storageUri used)
 ```
 
@@ -435,7 +440,13 @@ function buildRequestBody(c: VeoConfig) {
   if (c.referenceImages !== undefined && c.referenceImages.length > 0) {
     instance.referenceImages = c.referenceImages.map(encodeImage)
   }
-  if (c.videoExtensionInput !== undefined)         instance.video = { uri: c.videoExtensionInput }
+  // NOTE: videoExtensionInput is intentionally NOT handled here.
+  // VeoConfig declares it for forward-compat (so /veo-extend doesn't have to modify Foundation
+  // types), but the actual API field shape — gcsUri vs operationName vs other — is not yet
+  // verified against Vertex AI. /veo-extend owns the implementation: it will add the
+  // appropriate `instance.video = { gcsUri: ... }` or `{ operationName: ... }` dispatch
+  // after empirical probing of the API. Foundation deliberately does NOT pass-through
+  // here to avoid shipping a wrong shape that confuses users with cryptic API errors.
 
   // All parameter assignments use conditional `!== undefined` for two reasons:
   // (1) avoid sending explicit `undefined` values in JSON (the Vertex API may reject them);
@@ -457,7 +468,9 @@ function buildRequestBody(c: VeoConfig) {
 }
 ```
 
-Foundation ships `buildRequestBody` with the forward-declared image/extension branches **active** (they pass through to the API). Without the corresponding sub-project, the API will reject the call with its own error — Foundation does not gate it client-side beyond the validation rules above. This is intentional: it means a power user with custom code can already exercise image-to-video against Foundation's library before `/veo-animate` ships, just without the SKILL.md workflow guidance.
+Foundation ships `buildRequestBody` with the image forward-declared branches **active** (`image`, `lastFrame`, `referenceImages` — their wire shape is documented in the Vertex AI Veo API and pinned via `encodeImage`). A power user can exercise image-to-video against Foundation's library before `/veo-animate` ships, just without the SKILL.md workflow guidance.
+
+**`videoExtensionInput` is the exception**: Foundation declares the field on `VeoConfig` but does NOT pass it through in `buildRequestBody`. Reason: the wire shape for video extension (`gcsUri` vs `operationName` vs another field name) isn't verified against the API in the spec — it's `/veo-extend`'s responsibility to add the correct dispatch after empirical probing. Until then, setting `videoExtensionInput` is silently ignored by Foundation (rather than producing wrong API calls).
 
 ### 3. Cross-parameter validation rules
 
@@ -467,13 +480,13 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 
 | # | Rule | Error if violated | Owned by |
 |---|---|---|---|
-| 1 | `durationSeconds ∈ MODEL_DURATIONS[model]` — model-specific allowed durations. Veo 3.x: `{4, 6, 8}`. Veo 2: `{5, 6, 7, 8}` (the official doc states 5-8s range; exact set verified empirically per Open Question #4). Mapping table in `constants.ts`. | "durationSeconds X not allowed for model Y; supported: {…}" | Foundation |
+| 1 | `durationSeconds ∈ MODEL_DURATIONS[model]` — model-specific allowed durations. Veo 3.x: `{4, 6, 8}`. Veo 2: `{5, 6, 7, 8}` (the official doc states 5-8s range; exact set verified empirically per Open Question #4). Mapping table in `constants.ts`. **Unknown model (passed via `--model` escape valve and not in `MODEL_DURATIONS`)**: rule is **skipped** with a soft warning "duration not validated against unknown model — proceed at your own risk". | "durationSeconds X not allowed for model Y; supported: {…}" | Foundation |
 | 2 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
 | 3 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
 | 4 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
 | 5 | `prompt.tokens` estimated > 900 (Latin-script approx: chars / 3.5; non-Latin multipliers per Open Question #2). Hard ceiling is 1024 tokens but enforcement is server-side. | **Warning only** at >900 estimated. **Never rejected client-side** — the Veo API has no `countTokens` endpoint (verified against Vertex AI / Gemini API / Veo model docs), so any local heuristic produces false positives. The API rejects oversize prompts immediately with a clear error before generation starts, which is surfaced verbatim in Phase 5. | Foundation |
 | 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #1 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
-| 7 | `sampleCount ∈ [1, model-max]` (see Open Question #3) | "sampleCount out of range for selected model" | Foundation |
+| 7 | `sampleCount ∈ [1, model-max]` per `MODEL_SAMPLE_MAX[model]` (see Open Question #3). **Unknown model**: rule is **skipped** with a soft warning, same convention as rule #1. | "sampleCount out of range for selected model" | Foundation |
 | 8 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
 | 9 | Exactly one of `outputPath` or `storageUri` must be set on `VeoConfig` | Neither set → "Output destination required: set `outputPath` or `storageUri`". Both set → "Ambiguous output: set either `outputPath` or `storageUri`, not both" | Foundation |
 | F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
