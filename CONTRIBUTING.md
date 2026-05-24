@@ -27,7 +27,7 @@ git remote add upstream https://github.com/kdowswell/veo-tools.git
 
 > **Prerequisites** (all workflows): the [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated against `github.com` (`gh auth login`). The PR-creation steps below all use `gh pr create`.
 >
-> **Preflight for workflows that touch your working tree** (feature branches and sync-to-main; the atomic `upstream-sync` refresh in the next section is exempt because it doesn't checkout or modify any working files): start from a clean working tree (`git status` should report no modified or untracked files). Stash (`git stash -u`) or commit your local work first — the `git checkout` and `git merge` steps assume the working tree won't get contaminated. If you've been working on `main` directly (despite the rule), reconcile that first: either reset (`git checkout main && git reset --hard origin/main` after backing up your work) or branch it off (`git checkout -b backup/local-main`).
+> **Preflight for workflows that touch your working tree** (feature branches and sync-to-main; the atomic `upstream-sync` refresh in the next section is exempt because it doesn't checkout or modify any working files): start from a clean working tree (`git status` should report no modified or untracked files). Stash (`git stash -u`) or commit your local work first — the `git checkout` and `git merge` steps assume the working tree won't get contaminated. If you've been working on `main` directly (despite the rule), reconcile that first by **backing up and resetting in one step**: `git branch backup/local-main && git reset --hard origin/main`. This creates the backup ref without switching branches and then resets `main` in place. (Avoid `git checkout -b backup/local-main` alone — it creates the backup but leaves `main` still diverged, so the subsequent `git pull --ff-only` steps will fail with the same error.)
 
 ### Syncing `upstream-sync` with upstream
 
@@ -65,7 +65,7 @@ git merge --no-edit origin/upstream-sync             # --no-edit skips opening t
 # If conflicts: edit files, then `git add <resolved-files>` and `git merge --continue`
 # (or `git rebase --continue` if you rebased). Confirm `git status` shows a clean
 # state with no in-progress merge before pushing.
-git push -u origin sync/$SYNC_DATE
+git push -u --force-with-lease origin sync/$SYNC_DATE  # --force-with-lease is a no-op on first push but lets same-day retries succeed (the `-B` above can have moved the local ref past what's on origin)
 gh pr create --repo CTMobi/veo-tools --base main          # interactive: gh prompts for title and body so you can
                                                             # write a real summary of which upstream changes landed and
                                                             # how customizations reconciled. Don't pass --fill here:
@@ -169,7 +169,8 @@ Is the change something kdowswell would likely accept?
     internal work)
         → open BOTH PRs in parallel: one from upstream-sync to kdowswell, one
           equivalent from main to CTMobi. When upstream merges, the next sync
-          deduplicates the commit (or we resolve the conflict in the sync PR).
+          either merges cleanly (if the change has no overlap with what landed) or
+│         produces a conflict to resolve in the sync PR.
 ```
 
 When in doubt, base from `main` and PR to CTMobi — it's the safer default. Promoting a fork-internal commit to an upstream PR later is straightforward: create a new branch from `upstream-sync` and cherry-pick the commit onto it.
