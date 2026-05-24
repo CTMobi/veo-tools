@@ -74,7 +74,7 @@ gh pr create --repo CTMobi/veo-tools --base main          # interactive: gh prom
                                                             # leaving reviewers with no useful context.
 ```
 
-**If `main` has diverged** (the `--ff-only` fails because you have commits on local `main` that aren't on `origin/main`): you've broken the "never push to main" rule, but recovery is straightforward. Confirm you have no irreplaceable uncommitted work, then reset: `git checkout main && git reset --hard origin/main`. If those local commits represent real work, branch them off first (`git checkout -b recovery/local-main`) before resetting, then port them via a normal feature PR.
+**If `main` has diverged** (the `--ff-only` fails because you have commits on local `main` that aren't on `origin/main`): you've broken the "never push to main" rule, but recovery is straightforward. Confirm you have no irreplaceable uncommitted work, then reset: `git checkout main && git reset --hard origin/main`. If those local commits represent real work, save them in one step with `git branch recovery/local-main && git reset --hard origin/main` (creates the backup ref and resets `main` in place without switching branches — consistent with the Preflight block's warning against `git checkout -b` alone), then port them via a normal feature PR.
 
 For a trivial sync with no conflicts and no customizations affected, the maintainer may merge directly. This is the workflow that bypasses the PR rule, so it deserves the same multi-line presentation as the safer paths:
 
@@ -170,7 +170,7 @@ Is the change something kdowswell would likely accept?
         → open BOTH PRs in parallel: one from upstream-sync to kdowswell, one
           equivalent from main to CTMobi. When upstream merges, the next sync
           either merges cleanly (if the change has no overlap with what landed) or
-│         produces a conflict to resolve in the sync PR.
+          produces a conflict to resolve in the sync PR.
 ```
 
 When in doubt, base from `main` and PR to CTMobi — it's the safer default. Promoting a fork-internal commit to an upstream PR later is straightforward: create a new branch from `upstream-sync` and cherry-pick the commit onto it.
