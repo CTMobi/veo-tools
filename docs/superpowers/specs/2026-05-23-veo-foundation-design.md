@@ -89,7 +89,7 @@ skills/
       bootstrap.ts                  # registers tsconfig-paths with absolute REPO_ROOT — imported first by every entry script
       validation.ts                 # FOUNDATION_RULES, createValidator() factory
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
-      types.ts                      # VeoConfig, GenerationResult, InputMode, ValidationResult, ImageInput
+      types.ts                      # VeoConfig, GenerationResult, ValidationResult, ImageInput, VertexImage
       image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
       constants.ts                  # MODELS, REGIONS, MAX_TOKENS, MAX_REFERENCE_IMAGES, MODEL_DURATIONS
   veo/
@@ -172,10 +172,10 @@ Rationale for choosing aliases over relative imports: we are already adding root
 |---|---|---|
 | `auth.ts` | `getAccessToken(): Promise<string>` | **Uses `google-auth-library`** npm package (not shelled-out `gcloud` CLI). Supports Service Accounts, ADC, and Workload Identity natively. Removes dependency on gcloud CLI being installed in the execution context — important for CI/CD and containerized usage. The previous `gcloud auth print-access-token` call in `veo-generate.ts` is replaced. |
 | `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(url, path, token): Promise<void>` | URL building, HTTPS request handling, redirect following, **explicit HTTP status validation** (non-2xx/3xx → throw with status + body), partial-file cleanup on error |
-| `generate.ts` | `generateVideo(config: VeoConfig, outputPath?: string): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). `outputPath` is required only when `storageUri` is unset. |
+| `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
-| `image-helpers.ts` | `validateImage(input: ImageInput)`, `encodeImageBase64(path)`, `uploadImageToGcs(path, gcsUri)` | MIME sniffing, file I/O, GCS API |
+| `image-helpers.ts` | `validateImage(img: ImageInput): void` (throws on invalid MIME or unreachable file), `encodeImage(img: ImageInput): VertexImage`, `uploadImageToGcs(localPath: string, gcsUri: string): Promise<string>` | MIME sniffing, base64 encoding, file I/O, GCS API. `encodeImage` is the single public function used by `buildRequestBody`; the earlier `encodeImageBase64(path)` shape from prior drafts is dropped to keep the API surface unambiguous. |
 | `types.ts` | exports type definitions only | — |
 | `constants.ts` | exports frozen objects/arrays | — |
 
@@ -183,8 +183,8 @@ Rationale for choosing aliases over relative imports: we are already adding root
 
 ```
 CLI (veo-generate.ts)
-  └─> parseArgs → VeoConfig (fields left `undefined` when user did NOT pass the flag)
-        └─> generateVideo(config, outputPath?)
+  └─> parseArgs → VeoConfig (fields left `undefined` when user did NOT pass the flag; outputPath / storageUri included)
+        └─> generateVideo(config)
               ├─> validateConfig(config) → ValidationResult (never throws)
               │     ├─> if !result.valid: generateVideo throws with errors + suggestions
               │     └─> if result.valid: continue with result.autoFixed config (defaults applied + auto-corrections)
@@ -194,12 +194,14 @@ CLI (veo-generate.ts)
               └─> if config.storageUri:
               │     skip downloadFile — video already on GCS at storageUri
               │   else:
-              │     downloadFile(status.videoUrl, outputPath, token)
+              │     downloadFile(status.videoUrl, config.outputPath, token)
               │       └─> validate HTTP status; throw on non-2xx/3xx
         └─> GenerationResult (videoPath set when downloaded; gcsUri set when storageUri used)
 ```
 
 **Option provenance**: the CLI parser leaves a field `undefined` in `VeoConfig` when the user did NOT pass the corresponding flag. Defaults are applied inside `validateConfig()` (not in the parser). This lets validation distinguish "user explicitly set duration=6" (treat as user intent, hard-error if it conflicts with 1080p) from "duration not set, defaulting to 8" (apply auto-fix silently). The `result.autoFixed` config carries the final resolved values.
+
+**Output destination**: `outputPath` lives on `VeoConfig` (not as a second function argument). Rule #9 in `validation.ts` enforces that exactly one of `outputPath` or `storageUri` is set. This keeps the validator as the single source of truth for input shape and lets `generateVideo` have a one-argument signature.
 
 When `storageUri` is set, `outputPath` is ignored and `GenerationResult.gcsUri` carries the final location; `videoPath` is `undefined`. When `storageUri` is unset, the inverse holds. The CLI errors out if neither is provided.
 
@@ -235,7 +237,7 @@ The previous script's default `veo-3.1-generate-001` does not appear in current 
 
 Stable preference applies *within the same generation*, not across generations.
 
-**Fallback mechanism — static, not runtime**: Foundation does **not** catch API errors and retry with the fallback model. Instead, the chain is resolved once at startup via a static lookup in `constants.ts`:
+**Selection mechanism — curation, not runtime fallback**: this is a *documentation/curation* mechanism, not a runtime resilience mechanism. Foundation does **not** catch API errors and retry with the next model in the chain. If Google decommissions a model between Foundation releases, every default invocation 404s until a maintainer updates `AVAILABLE_MODELS` and `DEFAULT_MODEL_CHAIN` — surfacing this maintenance dependency is intentional, not a bug. The chain is resolved once at startup via a static lookup in `constants.ts`:
 
 ```typescript
 // constants.ts
@@ -268,6 +270,8 @@ The function takes **no parameter** — the lookup is purely against the static 
 
 `AVAILABLE_MODELS` is populated during Foundation implementation by empirically probing each documented model ID against the API. Once pinned, changes go through a Foundation-touching PR per the maintenance protocol (§6). Runtime invocations use the ID resolved at module load — there is no per-call retry on API error. If the chosen model returns 404/403 during generation, that's a real error surfaced verbatim.
 
+**Escape valve for new models**: `AVAILABLE_MODELS` only gates the **default** selection. Users can always pass `--model <any-id>` explicitly — Foundation forwards the value verbatim to the API. This means if Google ships Veo 3.2 before a maintainer updates `AVAILABLE_MODELS`, users aren't blocked: they pass `--model veo-3.2-generate-001` and the request goes through (the API itself validates the ID). The Foundation-touching PR for the constant follows when convenient, not as a blocker.
+
 Users who hardcoded the legacy ID in their own scripts can continue to use it as an explicit `--model` value; Foundation just doesn't pick it as the default anymore.
 
 #### `VeoConfig` type schema — forward declarations
@@ -289,6 +293,7 @@ export interface VeoConfig {
   enhancePrompt?: boolean
   storageUri?: string
   personGeneration?: 'allow_all' | 'allow_adult' | 'dont_allow'
+  outputPath?: string             // local path for download — required iff storageUri is unset (validation rule #9)
 
   // Forward-declared (validation/semantics added by sub-projects)
   image?: ImageInput              // /veo-animate
@@ -299,6 +304,25 @@ export interface VeoConfig {
 ```
 
 Foundation's `validateConfig()` ignores the forward-declared fields. Each sub-project composes its own validator via `createValidator()` (see §3) without modifying `VeoConfig`.
+
+#### `ImageInput` and `VertexImage` types
+
+Both types are exported from `types.ts` even though Foundation doesn't consume them — fixing the shape now prevents the three downstream image-consuming sub-projects from diverging.
+
+```typescript
+// User-facing input: what callers pass via VeoConfig.image, .lastFrame, .referenceImages
+export type ImageInput =
+  | { path: string;     mimeType?: string }   // local file (MIME sniffed from extension if absent)
+  | { buffer: Buffer;   mimeType: string }    // in-memory bytes (MIME explicit; sniff isn't reliable)
+  | { gcsUri: string;   mimeType?: string }   // gs:// reference (no encoding work needed)
+
+// Wire format: what encodeImage(img) returns, ready to drop into the Vertex API request body
+export type VertexImage =
+  | { bytesBase64Encoded: string; mimeType: string }   // produced from path / buffer
+  | { gcsUri: string;             mimeType?: string }  // produced from gcsUri (pass-through)
+```
+
+`encodeImage(img: ImageInput): VertexImage` is the only function `buildRequestBody` uses for image fields. Sub-projects that want to add custom image preprocessing wrap their own logic *around* `encodeImage`, not in place of it.
 
 #### CLI flags added
 
@@ -406,11 +430,11 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 | 2 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
 | 3 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
 | 4 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
-| 5 | `prompt.tokens` estimated to exceed 1024 (Latin-script approx: chars / 3.5; non-Latin multipliers per Open Question #2) | **Warning only** when estimated tokens > 900. **Never rejected client-side** — the Veo API has no `countTokens` endpoint (verified against Vertex AI / Gemini API / Veo model docs), so any local heuristic produces false positives. The API rejects oversize prompts immediately with a clear error before generation starts, which is surfaced verbatim in Phase 5. | Foundation |
+| 5 | `prompt.tokens` estimated > 900 (Latin-script approx: chars / 3.5; non-Latin multipliers per Open Question #2). Hard ceiling is 1024 tokens but enforcement is server-side. | **Warning only** at >900 estimated. **Never rejected client-side** — the Veo API has no `countTokens` endpoint (verified against Vertex AI / Gemini API / Veo model docs), so any local heuristic produces false positives. The API rejects oversize prompts immediately with a clear error before generation starts, which is surfaced verbatim in Phase 5. | Foundation |
 | 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #1 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
 | 7 | `sampleCount ∈ [1, model-max]` (see Open Question #3) | "sampleCount out of range for selected model" | Foundation |
 | 8 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
-| 9 | `storageUri` unset ⇒ `outputPath` must be provided | "Output destination required: pass `outputPath` or set `storageUri`" | Foundation |
+| 9 | `storageUri` unset ⇒ `outputPath` must be set on `VeoConfig` | "Output destination required: set `outputPath` or `storageUri`" | Foundation |
 | F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
 | F2 | `lastFrame` present ⇒ `durationSeconds == 8` AND `image` present | — | `/veo-interpolate` |
 | F3 | Video extension input ⇒ `resolution == 720p` | — | `/veo-extend` |
@@ -547,9 +571,12 @@ Shall I generate?
 
 Plugin version in `.claude-plugin/plugin.json` is currently `1.0.0`. Foundation bumps it to `1.1.0` (semver minor).
 
-**Rationale for minor (not major)**: the two behavioral changes (audio default derived from use case, model ID default chain) are *additive* — both have explicit override flags (`--no-audio`, `--model <id>`) that restore the previous behavior. A user who hardcoded the legacy model ID can continue passing it; a user who scripted `--audio false` (which was the previous implicit default) sees no change. The change affects only users relying on the *implicit* default for audio, which was undocumented.
+**Rationale for minor (not major)**: this is honest semver-minor only because the override flags exist and the CHANGELOG is prominent — *not* because the behavior is unchanged.
 
-The new `CHANGELOG.md` (Keep-a-Changelog format) prominently documents both behavioral changes so consumers can adjust if needed. If field experience shows users actually broke from the audio-default change, we'll consider a 1.x → 2.0.0 retroactive declaration in the next release.
+- **Audio default**: users who never passed `--audio` will see `generateAudio=true` after Foundation when their use case is `social`/`marketing`/`product`/`storytelling` (or when use case is unspecified). The previous implicit default was `false`. This is a real behavioral change with billing implications (audio generation costs more). Mitigations: (a) prominent CHANGELOG entry, (b) `--no-audio` override always restores the previous behavior, (c) Phase 4 PRESENT always shows the resolved audio state with reason before generation starts, giving the user a chance to abort.
+- **Model ID default**: changes only the *implicit* default. Users who hardcoded a specific `--model` value see no change.
+
+The new `CHANGELOG.md` (Keep-a-Changelog format) prominently documents both changes so consumers can adjust. If field experience shows users actually broke from the audio-default change, we'll consider a 1.x → 2.0.0 retroactive declaration in the next release.
 
 ### 6. Pricing strategy
 
@@ -623,8 +650,13 @@ At each release, the maintainer re-reads the official pricing URL and confirms t
 These were Open Questions in earlier revisions of the spec and have been resolved through documentation review or explicit user direction. Kept here as audit trail:
 
 - **Default model ID**: `veo-3.1-generate-preview` (latest generation; falls back to `veo-3.0-generate-001` if unavailable). Legacy ID `veo-3.1-generate-001` was not found in current docs and is dropped.
-- **Import strategy**: `@veo-core/*` path alias via `tsconfig-paths`. Choice motivated by the four downstream sub-projects all importing from `_shared/`.
+- **Import strategy**: `@veo-core/*` path alias via `tsconfig-paths`, registered programmatically by `bootstrap.ts` (not via `NODE_OPTIONS` — shebangs and CWD-relative resolution made that approach unreliable).
+- **Validation composition**: `createValidator({ baseRules, extraRules })` factory pattern (not a global `registerRule()` registry). Avoids module-load order coupling, cross-skill leakage, and test-order dependence.
 - **Token counting** (rule #5) **never hard-rejects**: verified Veo has no `countTokens` endpoint. See rule #5 description and Open Question #2 for the script-aware heuristic that powers the soft warning.
+- **Output destination**: `outputPath` lives on `VeoConfig` (not as a separate `generateVideo` argument); rule #9 enforces that exactly one of `outputPath` / `storageUri` is set.
+- **Image input shape**: `ImageInput` and `VertexImage` types pinned in §1 to prevent downstream sub-project divergence.
+- **`downloadFile` error handling**: explicit HTTP status validation (non-2xx/3xx throws with status + body) + partial-file cleanup on error.
+- **Authentication**: `google-auth-library` npm package (not shelling out to `gcloud` CLI). Native support for Service Accounts / ADC / Workload Identity; works in containers and CI.
 
 ## Open questions
 
@@ -654,7 +686,7 @@ These were Open Questions in earlier revisions of the spec and have been resolve
 
    **No `countTokens` pre-flight check** — verified against Vertex AI multimodal docs, Vertex AI REST reference, Gemini API tokens doc, and the Veo 3.1 model page: the `countTokens` endpoint supports only Gemini models (Gemini 3.1 Flash-Lite/Pro/Image, 3 Flash/Pro Image, 2.5 Pro/Flash variants). Veo is **not** in the supported list, and no per-model token counter exists. Any local heuristic would therefore produce false positives. Foundation accepts this and lets the Veo backend enforce the limit; the API's error message surfaces immediately (validation backend, not after the 2-4 min generation), so the UX cost of a missed warning is minimal.
 3. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
-4. **Veo 2 allowed durations**: official doc states a "5-8 seconds" range. It's unclear whether all integer values in that range are accepted or only specific values (e.g., 5/6/7/8 vs only 5/8). Foundation provisionally sets `MODEL_DURATIONS["veo-2.0-generate-001"] = {5, 6, 7, 8}` (rule #1) and verifies empirically during implementation by submitting each value and recording which succeed. The discovered set is encoded in `constants.ts`. Veo 3.x is well-documented at `{4, 6, 8}` and does not need this verification.
+4. **Veo 2 allowed durations**: official doc states a "5-8 seconds" range. It's unclear whether all integer values in that range are accepted or only specific values (e.g., 5/6/7/8 vs only 5/8). Foundation provisionally sets `MODEL_DURATIONS["veo-2.0-generate-001"] = {5, 6, 7, 8}` (rule #1) and verifies empirically during implementation by submitting each value and recording which succeed. The discovered set is encoded in `constants.ts` with an inline `// PROVISIONAL — verify and update after empirical probing` comment until the verification PR closes this question. Veo 2 is also still subject to Open Question #3 (`sampleCount` upper bound), so both verifications can be done in the same probe pass. Veo 3.x is well-documented at `{4, 6, 8}` and does not need this verification.
 
 ## Risks & contingency
 
@@ -667,7 +699,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. **Root infrastructure setup**: add root `package.json` with `vitest`, `ts-node`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `skills/_shared/veo-core/bootstrap.ts` (see Architecture) registering `tsconfig-paths` programmatically with an absolute path; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Verify a trivial test that imports a module via `@veo-core/*` alias passes in CI before proceeding.
+1. **Root infrastructure setup**: add root `package.json` with `vitest`, `ts-node`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `skills/_shared/veo-core/bootstrap.ts` (see Architecture) registering `tsconfig-paths` programmatically with `findRepoRoot()`; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`; update `.gitignore` to include `node_modules/`, `package-lock.json` (if not committing), and `coverage/`. Verify a trivial test that imports a module via `@veo-core/*` alias passes in CI before proceeding.
 2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
 3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
@@ -675,8 +707,8 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 6. Add new cross-cutting parameters + CLI flags to `_shared` and `veo-generate.ts`.
 7. Implement `validation.ts` with Foundation rules (#1–#9), exporting `FOUNDATION_RULES` array and the `createValidator({ baseRules, extraRules })` factory so sub-projects can compose their own validators without modifying Foundation.
 8. Implement `pricing.ts` with verified table + dated header.
-9. Empirical verification of Open Questions #3 (`sampleCount` per model) and #4 (Veo 2 allowed durations); update `constants.ts`. Also: probe Veo 2 capability vs current Veo 3 IDs to confirm the default chain (`veo-3.1-generate-preview` → `veo-3.0-generate-001` fallback) works as documented.
-10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table.
+9. Empirical verification of Open Questions #3 (`sampleCount` per model) and #4 (Veo 2 allowed durations); update `constants.ts`. Also: probe `AVAILABLE_MODELS` to confirm each documented ID accepts requests (rejects with sensible errors otherwise). **Budget warning**: this probe burns paid API credit — ~6 models × 3 sample counts × 4 durations ≈ 72 generations, at ~$2.50/gen ≈ $180. Run only when the rest of Foundation is solid enough that the probe results won't be invalidated by other changes. Record results in the PR (or a dedicated `docs/foundation-probe-results.md`) so future maintainers can re-run only the deltas.
+10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table. **Extend Phase 1 USE CASE enum** to add `loop` and `storytelling` values (currently the SKILL.md enum is `hero-background | marketing | social | product | ambient`; the audio default table in §2 also references `loop (any)` and `storytelling / multi-shot narrative`).
 11. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
 12. Write `skills/veo/references/audio-lexicon.md`.
 13. Update `skills/veo/examples/` with audio prompt examples.
