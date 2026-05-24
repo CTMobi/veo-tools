@@ -77,7 +77,7 @@ Foundation is the enabling block: all four downstream sub-projects depend on the
 ```
 tsconfig.json                       # NEW root tsconfig — declares @veo-core/* path alias (see Architecture text)
 vitest.config.ts                    # NEW root vitest config — mirrors tsconfig paths so tests resolve alias
-package.json                        # NEW root package.json — deps for runtime (google-auth-library, @google-cloud/storage, tsconfig-paths) + dev (vitest, typescript, @types/node)
+package.json                        # NEW root package.json — deps for runtime (google-auth-library, @google-cloud/storage, tsconfig-paths) + dev (vitest, ts-node, typescript, @types/node)
 .github/workflows/test.yml          # NEW CI workflow
 
 skills/
@@ -86,6 +86,7 @@ skills/
       auth.ts                       # getAccessToken() — uses google-auth-library
       api.ts                        # makeRequest, downloadFile, polling
       generate.ts                   # generateVideo(config) — unified entry
+      bootstrap.ts                  # registers tsconfig-paths with absolute REPO_ROOT — imported first by every entry script
       validation.ts                 # FOUNDATION_RULES, createValidator() factory
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
       types.ts                      # VeoConfig, GenerationResult, InputMode, ValidationResult, ImageInput
@@ -109,11 +110,44 @@ skills/
 
 The `_shared/` directory is excluded from skill discovery because it contains **no `SKILL.md`** — the Claude Code skill loader scans for `SKILL.md` files, not directory naming. The underscore prefix is a defensive convention (makes the intent visually obvious and avoids ambiguity with future loader rules), but the operative exclusion mechanism is the absence of `SKILL.md`. *To verify before implementation: confirm the current loader behavior in Claude Code; if loader rules ever change to scan by directory name, revisit.*
 
-Consuming skills reference `_shared/` via the **`@veo-core/*` path alias**, configured in the **root `tsconfig.json`** (added to the repository root by migration step 1, alongside `package.json`, `vitest.config.ts`, and the CI workflow — see directory layout above). The alias resolves automatically via the **`tsconfig-paths`** package: each script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"`, and `vitest.config.ts` references the same `tsconfig.json`. Example: `import { generateVideo } from '@veo-core/generate'`.
+Consuming skills reference `_shared/` via the **`@veo-core/*` path alias**, configured in the **root `tsconfig.json`** (added to the repository root by migration step 1, alongside `package.json`, `vitest.config.ts`, and the CI workflow — see directory layout above). Resolution is handled by `tsconfig-paths`, registered **programmatically via a bootstrap file** rather than via `NODE_OPTIONS`. Example consumer: `import { generateVideo } from '@veo-core/generate'`.
 
-We chose `tsconfig-paths` (registered globally via `NODE_OPTIONS`) over per-script `TS_NODE_PROJECT` env var management because it resolves the alias automatically across all invocations without requiring every script to export the variable. This also removes the path ambiguity that would arise from `TS_NODE_PROJECT=./tsconfig.json` resolving to whichever directory the script runs from.
+#### Why bootstrap, not `NODE_OPTIONS`
 
-Rationale for choosing aliases over relative imports: we are already adding root infrastructure (`package.json`, `vitest`, CI workflow) for the test runner. The marginal cost of also adding a root `tsconfig.json` + `tsconfig-paths` devDep is small, and the four downstream sub-projects will each import from `_shared/` — relative paths like `../../_shared/veo-core/pricing` repeated across all of them are brittle and cluttered.
+An earlier draft proposed `NODE_OPTIONS="-r tsconfig-paths/register"` to register the path resolver. Two practical problems with that approach:
+
+1. The existing scripts have a `#!/usr/bin/env npx ts-node` shebang. Shebangs do not expand environment variables, so direct invocation (`./veo-generate.ts`) would bypass `NODE_OPTIONS` and the alias would not resolve.
+2. Even when `NODE_OPTIONS` is set, `tsconfig-paths` resolves `tsconfig.json` relative to the current working directory. A script invoked from `skills/veo/scripts/` would not find the root `tsconfig.json`.
+
+The bootstrap file solves both problems by registering `tsconfig-paths` programmatically with an absolute path computed at startup:
+
+```typescript
+// skills/_shared/veo-core/bootstrap.ts
+import * as path from 'path'
+import { register } from 'tsconfig-paths'
+
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')   // resolves to repo root from this file's location
+
+register({
+  baseUrl: REPO_ROOT,
+  paths: {
+    '@veo-core/*': ['skills/_shared/veo-core/*'],
+  },
+})
+```
+
+Every entry point (each `*-generate.ts` CLI, every test file using the alias) imports the bootstrap **as its first line**:
+
+```typescript
+#!/usr/bin/env npx ts-node
+import '../../_shared/veo-core/bootstrap'   // first import — registers @veo-core/* alias
+import { generateVideo } from '@veo-core/generate'   // alias now resolves
+// ... rest of CLI
+```
+
+The first import uses a relative path because the alias isn't registered yet. From then on, all imports use the alias. Tests under `vitest` get the alias via `vitest.config.ts` `resolve.alias`, mirroring the bootstrap so test discovery works without importing the bootstrap manually.
+
+Rationale for choosing aliases over relative imports: we are already adding root infrastructure (`package.json`, `vitest`, CI workflow) for the test runner. The marginal cost of also adding a root `tsconfig.json` + bootstrap file is small, and the four downstream sub-projects will each import from `_shared/` — relative paths like `../../_shared/veo-core/pricing` repeated across all of them are brittle and cluttered.
 
 ### Module boundaries
 
@@ -177,12 +211,34 @@ When `storageUri` is set, `outputPath` is ignored and `GenerationResult.gcsUri` 
 | `veo-3.0-fast-generate-001` | Veo 3 fast stable | Production fast iteration | yes | 4K |
 | `veo-2.0-generate-001` | Veo 2 | Silent video, multi-sample | **no** | 720p |
 
-The previous script's default `veo-3.1-generate-001` does not appear in current official docs and is **dropped** from the default chain (see Resolved decisions). Foundation's default chain is:
+The previous script's default `veo-3.1-generate-001` does not appear in current official docs and is **dropped** from the default chain (see Resolved decisions). Foundation's default chain:
 
 1. `veo-3.1-generate-preview` (preferred — latest generation)
-2. `veo-3.0-generate-001` (fallback — latest stable if preview unavailable)
+2. `veo-3.0-generate-001` (fallback — latest stable)
 
-Stable preference applies *within the same generation*, not across generations. Users who hardcoded the legacy ID in their own scripts can continue to use it as an explicit `--model` value; Foundation just doesn't pick it as the default anymore.
+Stable preference applies *within the same generation*, not across generations.
+
+**Fallback mechanism — static, not runtime**: Foundation does **not** catch API errors and retry with the fallback model. Instead, the chain is resolved once at startup via a static lookup in `constants.ts`:
+
+```typescript
+// constants.ts
+export const DEFAULT_MODEL_CHAIN = [
+  'veo-3.1-generate-preview',
+  'veo-3.0-generate-001',
+] as const
+
+// resolved at startup in generate.ts:
+function resolveDefaultModel(availableModels: Set<string>): string {
+  for (const id of DEFAULT_MODEL_CHAIN) {
+    if (availableModels.has(id)) return id
+  }
+  throw new Error('No supported Veo model available')
+}
+```
+
+The set of `availableModels` is populated empirically during implementation (per Open Question #3 / #4 probing) and pinned in `constants.ts`. At startup, the script resolves the default once; runtime invocations always use the resolved ID. No fallback on API error — if the chosen model returns 404/403 during generation, that's a real error surfaced verbatim, not a silent retry that doubles latency.
+
+Users who hardcoded the legacy ID in their own scripts can continue to use it as an explicit `--model` value; Foundation just doesn't pick it as the default anymore.
 
 #### `VeoConfig` type schema — forward declarations
 
@@ -491,7 +547,7 @@ To prevent 4 downstream sub-projects from each forking the pricing table or mode
 The repository currently has **no test runner, no `.github/workflows/`, and no existing test suite**. Foundation must introduce these before unit tests are meaningful as a quality gate. Concretely:
 
 - **Test runner**: add `vitest` (TypeScript-native, no transpile step, ESM-friendly) as a devDependency. Lightweight enough to fit a plugin that previously had no build infrastructure.
-- **`package.json`**: introduce at repo root with `devDependencies: { vitest, typescript, @types/node }` and `dependencies: { google-auth-library, @google-cloud/storage, tsconfig-paths }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`. Notes: `tsconfig-paths` is a runtime dep (used by `-r tsconfig-paths/register` at script invocation). `@google-cloud/storage` is needed by `image-helpers.ts`'s `uploadImageToGcs` and by `storageUri` handling — shipped in Foundation so downstream sub-projects don't have to add it.
+- **`package.json`**: introduce at repo root with `devDependencies: { vitest, ts-node, typescript, @types/node }` and `dependencies: { google-auth-library, @google-cloud/storage, tsconfig-paths }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`. Notes: `ts-node` pinned as devDep so all developers/CI use the same version. `tsconfig-paths` is a runtime dep registered via the bootstrap file (see below). `@google-cloud/storage` is needed by `image-helpers.ts`'s `uploadImageToGcs` and by `storageUri` handling.
 - **CI workflow**: add `.github/workflows/test.yml` running `npm ci && npm test` on pull requests against `main`. No deployment, no integration with paid APIs (those remain manual per release checklist).
 - **No CI for billed integration tests**: the manual release checklist (paid, ~$X per round) is explicitly out of CI scope; it runs once before merge by the maintainer.
 
@@ -575,7 +631,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. **Root infrastructure setup**: add root `package.json` with `vitest`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Each skill script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"` so the alias resolves automatically without per-script env var management. Verify a trivial test resolves `@veo-core/*` and passes in CI before proceeding.
+1. **Root infrastructure setup**: add root `package.json` with `vitest`, `ts-node`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `skills/_shared/veo-core/bootstrap.ts` (see Architecture) registering `tsconfig-paths` programmatically with an absolute path; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Verify a trivial test that imports a module via `@veo-core/*` alias passes in CI before proceeding.
 2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
 3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
