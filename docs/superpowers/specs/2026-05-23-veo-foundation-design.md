@@ -174,7 +174,7 @@ Rationale for choosing aliases over relative imports: we are already adding root
 | Module | Public API | Internal |
 |---|---|---|
 | `auth.ts` | `getAccessToken(): Promise<string>` | **Uses `google-auth-library`** npm package (not shelled-out `gcloud` CLI). Supports Service Accounts, ADC, and Workload Identity natively. Removes dependency on gcloud CLI being installed in the execution context — important for CI/CD and containerized usage. The previous `gcloud auth print-access-token` call in `veo-generate.ts` is replaced. |
-| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(url, path, token): Promise<void>` | URL building, HTTPS request handling, redirect following, **explicit HTTP status validation** (non-2xx/3xx → throw with status + body), partial-file cleanup on error |
+| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx). `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually, validates non-2xx/3xx → throws with status + body, cleans up partial files on error) and `gs://` (downloads via `@google-cloud/storage` client). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
 | `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
@@ -203,6 +203,15 @@ CLI (veo-generate.ts)
 ```
 
 **Option provenance**: the CLI parser leaves a field `undefined` in `VeoConfig` when the user did NOT pass the corresponding flag. Defaults are applied inside `validateConfig()` (not in the parser). This lets validation distinguish "user explicitly set duration=6" (treat as user intent, hard-error if it conflicts with 1080p) from "duration not set, defaulting to 8" (apply auto-fix silently). The `result.autoFixed` config carries the final resolved values.
+
+**Internal ordering inside `validateConfig()`** (matters because rules #1, #3, #4, #7 read `config.model`):
+
+1. **Resolve defaults first** — including calling `resolveDefaultModel()` if `config.model === undefined`. After this step, every field that has a default is set.
+2. **Run all rules** against the fully-defaulted config. Rules can safely assume `config.model` is a non-undefined string.
+3. **Apply auto-fixes** for the auto-correctable cases (region, duration-implied-by-resolution, Veo 2 audio when undefined).
+4. **Return** `{valid: true, autoFixed: <fully-resolved-config>, warnings, autoFixMessages}` or `{valid: false, errors, suggestions}`.
+
+Without this ordering, an unset `config.model` would cause `MODEL_DURATIONS[config.model]` (rule #1) to return `undefined` and the rule would either crash or silently pass — both are bugs. The order above is invariant; tests should assert it.
 
 **Output destination**: `outputPath` lives on `VeoConfig` (not as a second function argument). Rule #9 in `validation.ts` enforces that exactly one of `outputPath` or `storageUri` is set. This keeps the validator as the single source of truth for input shape and lets `generateVideo` have a one-argument signature.
 
@@ -260,16 +269,27 @@ export const AVAILABLE_MODELS: ReadonlySet<string> = new Set([
   'veo-2.0-generate-001',
 ])
 
-// resolved once at module load in generate.ts:
+// resolved lazily on first call (NOT at module load) so tests can mock
+// constants before the first invocation:
+let cachedDefault: string | undefined
 export function resolveDefaultModel(): string {
+  if (cachedDefault !== undefined) return cachedDefault
   for (const id of DEFAULT_MODEL_CHAIN) {
-    if (AVAILABLE_MODELS.has(id)) return id
+    if (AVAILABLE_MODELS.has(id)) {
+      cachedDefault = id
+      return id
+    }
   }
   throw new Error('No supported Veo model available in constants.AVAILABLE_MODELS')
 }
+
+// Test-only helper: reset the cache so vi.mock-injected constants apply.
+export function _resetDefaultModelCacheForTests(): void {
+  cachedDefault = undefined
+}
 ```
 
-The function takes **no parameter** — the lookup is purely against the static `AVAILABLE_MODELS` constant. This removes the previous ambiguity (a parameter named `availableModels` implied a runtime-computed set, contradicting "static" framing). Tests substitute the constant via `vi.mock('@veo-core/constants', ...)` to exercise edge cases (e.g., preview unavailable).
+The function takes **no parameter** — the lookup is purely against the static `AVAILABLE_MODELS` constant. **Lazy resolution** (memoized on first call) keeps module-load free of side effects, so `vi.mock('@veo-core/constants', …)` injected before the first call sees its substitutes. The test helper resets the memoization between tests. This removes the previous ambiguity (a parameter named `availableModels` implied a runtime-computed set, contradicting "static" framing).
 
 `AVAILABLE_MODELS` is populated during Foundation implementation by empirically probing each documented model ID against the API. Once pinned, changes go through a Foundation-touching PR per the maintenance protocol (§6). Runtime invocations use the ID resolved at module load — there is no per-call retry on API error. If the chosen model returns 404/403 during generation, that's a real error surfaced verbatim.
 
@@ -349,11 +369,11 @@ Phase 1 UNDERSTAND already collects `USE CASE`. Foundation derives audio default
 |---|---|---|
 | `hero-background` | off | Goes under text overlay; browser autoplay-with-audio blocked |
 | `ambient` | off | Silent seamless loop |
-| `loop` (any) | off | Audio crossfade in loops introduces artifacts |
+| `loop` | off | Audio crossfade in loops introduces artifacts |
 | `social` | on | Reels/TikTok/Shorts: audio primary |
 | `marketing` | on | Promos, ads, brand stories |
 | `product` | on | Showcase with SFX or voiceover |
-| `storytelling` / multi-shot narrative | on | Dialogue + sync are the point |
+| `storytelling` (used for multi-shot narrative) | on | Dialogue + sync are the point |
 | **Not specified** | **on** | Matches Veo 3.1 API native default; user disables with `--no-audio` |
 
 Explicit `--audio` / `--no-audio` always wins. The Phase 4 PRESENT output shows the resolved audio state with reason ("on (derived from use case=social)").
@@ -397,12 +417,12 @@ Pseudocode shape (illustrative — implementation may differ):
 
 function buildRequestBody(c: VeoConfig) {
   const instance: Record<string, unknown> = { prompt: c.prompt }
-  if (c.image)                                     instance.image = encodeImage(c.image)
-  if (c.lastFrame)                                 instance.lastFrame = encodeImage(c.lastFrame)
-  if (c.referenceImages && c.referenceImages.length > 0) {
+  if (c.image !== undefined)                       instance.image = encodeImage(c.image)
+  if (c.lastFrame !== undefined)                   instance.lastFrame = encodeImage(c.lastFrame)
+  if (c.referenceImages !== undefined && c.referenceImages.length > 0) {
     instance.referenceImages = c.referenceImages.map(encodeImage)
   }
-  if (c.videoExtensionInput)                       instance.video = { uri: c.videoExtensionInput }
+  if (c.videoExtensionInput !== undefined)         instance.video = { uri: c.videoExtensionInput }
 
   // All parameter assignments use conditional `!== undefined` for two reasons:
   // (1) avoid sending explicit `undefined` values in JSON (the Vertex API may reject them);
@@ -483,6 +503,7 @@ Applied with explicit user notification in Phase 4 PRESENT:
 | `resolution=1080p/4k` + `durationSeconds === undefined` (user didn't pass `--duration` flag) | Set `duration=8` | "Bumped duration to 8s to enable 1080p/4K" |
 | Region=EU + `personGeneration=allow_all` | Force `allow_adult` | "Region restriction: personGeneration set to allow_adult" |
 | `model=veo-2.*` + `generateAudio === undefined` + (use case implies audio) | Set `generateAudio=false` | "Veo 2 doesn't support audio, disabled" |
+| `model=veo-2.*` + `generateAudio === true` (user explicitly passed `--audio`) | **No auto-fix — hard error** (rule #3) | "Veo 2 does not support audio. Pass `--no-audio` or switch to a Veo 3 model." |
 
 Auto-fixes apply only when the field is `undefined` (user didn't pass the flag — see option provenance in Data flow §). If the user explicitly set a value that conflicts (e.g., `--duration 6 --resolution 1080p`), validation hard-rejects with an error suggesting the user pick one.
 
@@ -575,7 +596,8 @@ Shall I generate?
 | Audio default changes (off → context-aware; on when use case unspecified) | **Yes, behavioral** | Documented in CHANGELOG; explicit `--no-audio` restores old behavior. Phase 4 PRESENT shows resolved audio state |
 | Default model `veo-3.1-generate-001` → `veo-3.1-generate-preview` (and `veo-3.0-generate-001` fallback) | **Yes, behavioral** | Documented in CHANGELOG; the legacy ID `veo-3.1-generate-001` is dropped from the default chain because it doesn't appear in current docs. Users who hardcoded the legacy ID in their own scripts can keep doing so — the spec only changes the *default*. Aligned with the "Resolved decisions" section. |
 | New `validateConfig()` rules with auto-fix | No | Auto-fix is additive; rejects only what API would reject anyway |
-| Extended `VeoConfig` type | No | All new fields optional |
+| Extended `VeoConfig` type — most new fields are truly optional | No | — |
+| `VeoConfig.outputPath` is **additive-required** when `storageUri` is unset | **Yes, behavioral** | Rule #9 hard-errors if neither `outputPath` nor `storageUri` is set. Callers using the previous `generateVideo(config, outputPath)` signature must now pass `outputPath` (or `storageUri`) **inside** the config object. Migration is mechanical and the error message is explicit, but it's not source-compatible with the previous shape. |
 
 Plugin version in `.claude-plugin/plugin.json` is currently `1.0.0`. Foundation bumps it to `1.1.0` (semver minor).
 
@@ -690,7 +712,7 @@ These were Open Questions in earlier revisions of the spec and have been resolve
    | Hebrew (`֐–׿`) | 2.0 | Conservative |
    | Devanagari (`ऀ–ॿ`) | 1.8 | Conservative for Hindi/Sanskrit |
 
-   Detection: count chars per script; the dominant range determines the multiplier (>30% threshold). Mixed prompts default to the most restrictive multiplier among present scripts. Mitigation tiers: (a) rule #5 acts as a **soft warning** at >900 estimated tokens — **never a hard reject** (see rationale below); (b) when a non-Latin multiplier is used, the warning notes "estimate approximate for non-Latin content"; (c) Phase 5 API-side token errors are surfaced verbatim and tagged for the maintainer to revisit the ratios.
+   Detection (unambiguous single rule): scan the prompt and for each script range, count the chars in it. **Among scripts whose presence exceeds 5% of total chars, pick the one with the smallest ratio (most restrictive, i.e., produces the highest token estimate).** This always returns a definitive answer regardless of distribution: a prompt with 95% Latin and 5% CJK uses the CJK multiplier (conservative); a 100% Latin prompt uses Latin; a balanced 40/35/25 distribution uses the smallest-ratio script present. The earlier wording mixed "dominant >30%" with "most restrictive" — those two rules conflicted for prompts with no >30% script; the single-rule formulation above resolves the ambiguity. Mitigation tiers: (a) rule #5 acts as a **soft warning** at >900 estimated tokens — **never a hard reject** (see rationale below); (b) when a non-Latin multiplier is used, the warning notes "estimate approximate for non-Latin content"; (c) Phase 5 API-side token errors are surfaced verbatim and tagged for the maintainer to revisit the ratios.
 
    **No `countTokens` pre-flight check** — verified against Vertex AI multimodal docs, Vertex AI REST reference, Gemini API tokens doc, and the Veo 3.1 model page: the `countTokens` endpoint supports only Gemini models (Gemini 3.1 Flash-Lite/Pro/Image, 3 Flash/Pro Image, 2.5 Pro/Flash variants). Veo is **not** in the supported list, and no per-model token counter exists. Any local heuristic would therefore produce false positives. Foundation accepts this and lets the Veo backend enforce the limit; the API's error message surfaces immediately (validation backend, not after the 2-4 min generation), so the UX cost of a missed warning is minimal.
 3. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
@@ -716,7 +738,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 7. Implement `validation.ts` with Foundation rules (#1–#9), exporting `FOUNDATION_RULES` array and the `createValidator({ baseRules, extraRules })` factory so sub-projects can compose their own validators without modifying Foundation.
 8. Implement `pricing.ts` with verified table + dated header.
 9. Empirical verification of Open Questions #3 (`sampleCount` per model) and #4 (Veo 2 allowed durations); update `constants.ts`. Also: probe `AVAILABLE_MODELS` to confirm each documented ID accepts requests (rejects with sensible errors otherwise). **Budget warning**: this probe burns paid API credit — ~6 models × 3 sample counts × 4 durations ≈ 72 generations, at ~$2.50/gen ≈ $180. Run only when the rest of Foundation is solid enough that the probe results won't be invalidated by other changes. Record results in the PR (or a dedicated `docs/foundation-probe-results.md`) so future maintainers can re-run only the deltas.
-10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table. **Extend Phase 1 USE CASE enum** to add `loop` and `storytelling` values (currently the SKILL.md enum is `hero-background | marketing | social | product | ambient`; the audio default table in §2 also references `loop (any)` and `storytelling / multi-shot narrative`).
+10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table. **Extend Phase 1 USE CASE enum** to: `hero-background | marketing | social | product | ambient | loop | storytelling` — adding `loop` and `storytelling` so the audio default table in §2 has exact 1:1 enum matches.
 11. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
 12. Write `skills/veo/references/audio-lexicon.md`.
 13. Update `skills/veo/examples/` with audio prompt examples.
