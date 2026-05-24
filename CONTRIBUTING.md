@@ -57,8 +57,11 @@ SYNC_DATE=$(date +%Y-%m-%d)                          # captured once to avoid da
 git fetch origin                                     # refreshes origin/upstream-sync remote-tracking branch
 git checkout main
 git pull --ff-only origin main                       # if this fails, your local main diverged — see "If main has diverged" below
-git checkout -B sync/$SYNC_DATE                      # `-B` so a retry on the same day overwrites the previous attempt
-git merge origin/upstream-sync                       # merge the remote-tracking branch directly, no local checkout needed
+git checkout -B sync/$SYNC_DATE                      # `-B` overwrites the local branch on retry. If sync/<date> was
+                                                     # already pushed earlier (a prior attempt was pushed but the merge
+                                                     # needs redoing), the subsequent git push will need
+                                                     # --force-with-lease since the remote ref has moved.
+git merge --no-edit origin/upstream-sync             # --no-edit skips opening the editor for the merge commit message
 # If conflicts: edit files, then `git add <resolved-files>` and `git merge --continue`
 # (or `git rebase --continue` if you rebased). Confirm `git status` shows a clean
 # state with no in-progress merge before pushing.
@@ -73,7 +76,19 @@ gh pr create --repo CTMobi/veo-tools --base main          # interactive: gh prom
 
 **If `main` has diverged** (the `--ff-only` fails because you have commits on local `main` that aren't on `origin/main`): you've broken the "never push to main" rule, but recovery is straightforward. Confirm you have no irreplaceable uncommitted work, then reset: `git checkout main && git reset --hard origin/main`. If those local commits represent real work, branch them off first (`git checkout -b recovery/local-main`) before resetting, then port them via a normal feature PR.
 
-For a trivial sync with no conflicts and no customizations affected, the maintainer may merge directly with an explicit branch switch and a pull-first to stay consistent with the other workflows: `git checkout main && git pull --ff-only origin main && git fetch origin && git merge origin/upstream-sync && git push origin main`. The `git pull` refreshes `main`; `git fetch origin` refreshes `origin/upstream-sync` (the pull only fetches `main`, so without this step the merge could pick up a stale mirror state). Merging `origin/upstream-sync` (rather than the local `upstream-sync` ref) ensures the merge takes the latest state pushed to the remote mirror. Note this is **not** a fast-forward in the strict git sense — once `main` has any customization (including this `CONTRIBUTING.md`), `main` diverges from `upstream/main` and `git merge --ff-only` would fail. We just mean "merge without conflicts or PR". The PR path is the default; the direct merge is the documented exception when there's literally nothing to review.
+For a trivial sync with no conflicts and no customizations affected, the maintainer may merge directly. This is the workflow that bypasses the PR rule, so it deserves the same multi-line presentation as the safer paths:
+
+```bash
+# Direct merge — only when: no conflicts, no customizations affected, truly nothing to review.
+# The PR path is the default. If in doubt, use the PR workflow above.
+git checkout main
+git pull --ff-only origin main             # fast-fails if local main diverged — see "If main has diverged" above
+git fetch origin                           # refreshes origin/upstream-sync (the pull only fetches main)
+git merge --no-edit origin/upstream-sync   # --no-edit skips the editor; merge from the remote-tracking ref
+git push origin main
+```
+
+Note this is **not** a fast-forward in the strict git sense — once `main` has any customization (including this `CONTRIBUTING.md`), `main` diverges from `upstream/main` and `git merge --ff-only` would fail. We just mean "merge without conflicts or PR". The final `git push origin main` may also be blocked if branch protection rules are configured on GitHub (e.g., "require pull request before merging") — maintainers without bypass permissions must use the PR workflow above instead.
 
 The choice between `merge` and `rebase` inside the sync branch is a team policy decision. Default for this repo: **merge** (preserves history, makes upstream provenance visible). Switch to rebase only with team agreement.
 
