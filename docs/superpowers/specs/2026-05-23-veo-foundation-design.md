@@ -91,7 +91,7 @@ skills/
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
       types.ts                      # VeoConfig, GenerationResult, ValidationResult, ImageInput, VertexImage
       image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
-      constants.ts                  # MODELS, REGIONS, MAX_TOKENS, TOKEN_WARNING_THRESHOLD, MAX_REFERENCE_IMAGES, MODEL_DURATIONS, MODEL_SAMPLE_MAX, AVAILABLE_MODELS, DEFAULT_MODEL_CHAIN
+      constants.ts                  # AVAILABLE_MODELS, DEFAULT_MODEL_CHAIN, MODEL_DURATIONS, MODEL_SAMPLE_MAX, AUDIO_DEFAULTS, MODEL_SUGGESTIONS, REGIONS, MAX_TOKENS, TOKEN_WARNING_THRESHOLD, MAX_REFERENCE_IMAGES
   veo/
     scripts/
       veo-generate.ts               # thin CLI wrapper (~150 lines target, was 595)
@@ -187,7 +187,7 @@ Rationale for choosing aliases over relative imports: we are already adding root
 | `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
-| `image-helpers.ts` | `validateImage(img: ImageInput): void` (throws on invalid MIME or unreachable file), `encodeImage(img: ImageInput): VertexImage`, `uploadImageToGcs(localPath: string, gcsUri: string): Promise<string>` | MIME sniffing, base64 encoding, file I/O, GCS API. `encodeImage` is the single public function used by `buildRequestBody`; the earlier `encodeImageBase64(path)` shape from prior drafts is dropped to keep the API surface unambiguous. |
+| `image-helpers.ts` | `validateImage(img: ImageInput): void` (synchronous validation: throws on invalid MIME, unreachable local file, or malformed `gs://` URI; **does NOT verify GCS object existence** — that would require an async API call. Use `uploadImageToGcs` or rely on the API call itself for actual reachability), `encodeImage(img: ImageInput): VertexImage`, `uploadImageToGcs(localPath: string, gcsUri: string): Promise<string>` | MIME sniffing, base64 encoding, file I/O, GCS API. `encodeImage` is the single public function used by `buildRequestBody`; the earlier `encodeImageBase64(path)` shape from prior drafts is dropped to keep the API surface unambiguous. |
 | `types.ts` | exports type definitions only | — |
 | `constants.ts` | exports frozen objects/arrays | — |
 
@@ -364,6 +364,54 @@ export type VertexImage =
 ```
 
 `encodeImage(img: ImageInput): VertexImage` is the only function `buildRequestBody` uses for image fields. Sub-projects that want to add custom image preprocessing wrap their own logic *around* `encodeImage`, not in place of it.
+
+#### `GenerationResult` type
+
+`generateVideo()` returns:
+
+```typescript
+export type GenerationResult = {
+  videoPath?: string         // local filesystem path when downloaded (storageUri unset)
+  gcsUri?: string            // gs://... when storageUri was set (server-side delivery)
+  operationName: string      // Vertex AI long-running operation name (for retry / extension use)
+  model: string              // resolved model ID actually used
+  durationSeconds: number    // resolved duration
+  resolution: string         // resolved resolution
+  warnings: string[]         // validation warnings surfaced from validateConfig
+}
+```
+
+Exactly one of `videoPath` / `gcsUri` is set (mirrors rule #9). The other resolved fields (`operationName`, `model`, etc.) let callers audit what actually happened and feed into future operations (e.g., `/veo-extend` will need `operationName`).
+
+#### `AUDIO_DEFAULTS` and `MODEL_SUGGESTIONS` constants
+
+The audio-default table in §2 and the model-suggestion table (implicit in workflow Phase 1) are codified as named constants in `constants.ts` so they are testable, auditable, and don't drift between the spec, SKILL.md, and library:
+
+```typescript
+export const AUDIO_DEFAULTS: Record<string, boolean> = {
+  'hero-background': false,
+  'ambient':         false,
+  'loop':            false,
+  'social':          true,
+  'marketing':       true,
+  'product':         true,
+  'storytelling':    true,
+  // Unspecified use case → true (Veo 3.1 API native default).
+  // Callers check `AUDIO_DEFAULTS[useCase] ?? true` to apply this fallback.
+}
+
+export const MODEL_SUGGESTIONS: Record<string, { quality: string; fast: string; lite?: string }> = {
+  'hero-background': { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
+  'ambient':         { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
+  'loop':            { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
+  'social':          { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview' },
+  'marketing':       { quality: 'veo-3.0-generate-001',          fast: 'veo-3.0-fast-generate-001' },
+  'product':         { quality: 'veo-3.0-generate-001',          fast: 'veo-3.0-fast-generate-001' },
+  'storytelling':    { quality: 'veo-3.0-generate-001',          fast: 'veo-3.0-fast-generate-001' },
+}
+```
+
+Both tables are pure data — no logic. `audio-default.test.ts` and `model-routing.test.ts` (in the test plan) become straightforward asserts that the constants match the spec tables. SKILL.md Phase 1 conversational logic reads from these tables rather than hardcoding the values, preventing silent drift.
 
 #### CLI flags added
 
