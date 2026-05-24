@@ -220,7 +220,7 @@ CLI (veo-generate.ts)
 
 **Internal ordering inside `validateConfig()`** (matters because rules #1, #3, #4, #7 read `config.model`):
 
-1. **Resolve defaults first** — including calling `resolveDefaultModel()` if `config.model === undefined`. After this step, every field that has a default is set.
+1. **Resolve defaults first** — including calling `resolveDefaultModel()` if `config.model === undefined`. After this step, every field that has a default is set. **`resolveDefaultModel()` can throw** (e.g., `AVAILABLE_MODELS` is empty or misconfigured); `validateConfig()` wraps the call in try/catch and converts any exception into a `{valid: false, errors: [<message>], suggestions: ['Check constants.AVAILABLE_MODELS configuration']}` result. This preserves the never-throws contract of `validateConfig()` even when its dependencies fail.
 2. **Run all rules** against the fully-defaulted config. Rules can safely assume `config.model` is a non-undefined string.
 3. **Apply auto-fixes** for the auto-correctable cases (region, duration-implied-by-resolution, Veo 2 audio when undefined).
 4. **Return** `{valid: true, autoFixed: <fully-resolved-config>, warnings, autoFixMessages}` or `{valid: false, errors, suggestions}`.
