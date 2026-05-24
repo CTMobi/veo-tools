@@ -25,7 +25,7 @@ git remote add upstream https://github.com/kdowswell/veo-tools.git
 
 ## Workflows
 
-> **Preflight for all workflows below**: start from a clean working tree (`git status` should report no modified or untracked files). Stash (`git stash -u`) or commit your local work first — the `git checkout` and `git merge` steps assume the working tree won't get contaminated. If you've been working on `main` directly (despite the rule), reconcile that first: either reset (`git checkout main && git reset --hard origin/main` after backing up your work) or branch it off (`git checkout -b backup/local-main`).
+> **Preflight for workflows that touch your working tree** (feature branches and sync-to-main; the atomic `upstream-sync` refresh in the next section is exempt because it doesn't checkout or modify any working files): start from a clean working tree (`git status` should report no modified or untracked files). Stash (`git stash -u`) or commit your local work first — the `git checkout` and `git merge` steps assume the working tree won't get contaminated. If you've been working on `main` directly (despite the rule), reconcile that first: either reset (`git checkout main && git reset --hard origin/main` after backing up your work) or branch it off (`git checkout -b backup/local-main`).
 
 ### Syncing `upstream-sync` with upstream
 
@@ -42,7 +42,7 @@ git push --force-with-lease origin upstream-sync
 
 `--force-with-lease` is required because `upstream-sync` is a mirror, not an additive branch. No work ever lives there directly, so the force push is safe by design. Two failure modes to know:
 
-- **Push rejected by lease** — another maintainer synced concurrently. Re-run the three commands; the second attempt will be a no-op (your changes already landed) or pick up their changes via `upstream/main`.
+- **Push rejected by lease** — another maintainer synced concurrently. Re-run the three commands: since `git fetch upstream main:upstream-sync --force` always pulls the same upstream state, the second attempt picks up whatever the concurrent maintainer pushed and the re-run is a safe no-op for `origin/upstream-sync` content.
 - **Fetch refuses "current branch"** — you're checked out on `upstream-sync`. Switch to `main` (or any other branch) and retry.
 
 ### Bringing upstream changes into `main`
@@ -61,12 +61,14 @@ git merge origin/upstream-sync                       # merge the remote-tracking
 # (or `git rebase --continue` if you rebased). Confirm `git status` shows a clean
 # state with no in-progress merge before pushing.
 git push -u origin sync/$SYNC_DATE
-gh pr create --repo CTMobi/veo-tools --base main --fill
+gh pr create --repo CTMobi/veo-tools --base main --fill   # then edit the auto-filled title/body before publishing —
+                                                            # --fill takes them from the last commit (often a merge commit
+                                                            # like "Merge origin/upstream-sync") which is terse for reviewers
 ```
 
 **If `main` has diverged** (the `--ff-only` fails because you have commits on local `main` that aren't on `origin/main`): you've broken the "never push to main" rule, but recovery is straightforward. Confirm you have no irreplaceable uncommitted work, then reset: `git checkout main && git reset --hard origin/main`. If those local commits represent real work, branch them off first (`git checkout -b recovery/local-main`) before resetting, then port them via a normal feature PR.
 
-For a trivial sync with no conflicts and no customizations affected, the maintainer may merge directly with an explicit branch switch to avoid merging into the wrong branch: `git checkout main && git merge origin/upstream-sync && git push origin main`. Merging `origin/upstream-sync` (rather than the local `upstream-sync` ref) ensures the merge takes the latest state pushed to the remote mirror, regardless of whether the local ref was refreshed. Note this is **not** a fast-forward in the strict git sense — once `main` has any customization (including this `CONTRIBUTING.md`), `main` diverges from `upstream/main` and `git merge --ff-only` would fail. We just mean "merge without conflicts or PR". The PR path is the default; the direct merge is the documented exception when there's literally nothing to review.
+For a trivial sync with no conflicts and no customizations affected, the maintainer may merge directly with an explicit branch switch and a pull-first to stay consistent with the other workflows: `git checkout main && git pull --ff-only origin main && git merge origin/upstream-sync && git push origin main`. The pull-first prevents accidentally pushing stray local commits on `main` (the same risk the PR-based workflows guard against). Merging `origin/upstream-sync` (rather than the local `upstream-sync` ref) ensures the merge takes the latest state pushed to the remote mirror. Note this is **not** a fast-forward in the strict git sense — once `main` has any customization (including this `CONTRIBUTING.md`), `main` diverges from `upstream/main` and `git merge --ff-only` would fail. We just mean "merge without conflicts or PR". The PR path is the default; the direct merge is the documented exception when there's literally nothing to review.
 
 The choice between `merge` and `rebase` inside the sync branch is a team policy decision. Default for this repo: **merge** (preserves history, makes upstream provenance visible). Switch to rebase only with team agreement.
 
