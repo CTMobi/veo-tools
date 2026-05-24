@@ -210,10 +210,12 @@ CLI (veo-generate.ts)
               │       └─> if target.startsWith('gs://'):
               │             use @google-cloud/storage client to copy GCS object → local file
               │           else (https://):
-              │             HTTPS request with 30s timeout; follow redirects (max 5);
+              │             HTTPS request with 30s socket-idle timeout; follow redirects (max 5);
+              │             strip Authorization header on cross-origin redirects;
               │             validate non-2xx/3xx → throw with status + body;
               │             cleanup partial file on error
-        └─> GenerationResult (videoPath set when downloaded; gcsUri set when storageUri used)
+        └─> GenerationResult — videoPath set when downloaded, gcsUri set when storageUri used,
+            warnings propagated from result.warnings (validation soft warnings + any phase-5 notes)
 ```
 
 **Option provenance**: the CLI parser leaves a field `undefined` in `VeoConfig` when the user did NOT pass the corresponding flag. Defaults are applied inside `validateConfig()` (not in the parser). This lets validation distinguish "user explicitly set duration=6" (treat as user intent, hard-error if it conflicts with 1080p) from "duration not set, defaulting to 8" (apply auto-fix silently). The `result.autoFixed` config carries the final resolved values.
@@ -309,7 +311,7 @@ export function _resetDefaultModelCacheForTests(): void {
 
 The function takes **no parameter** — the lookup is purely against the static `AVAILABLE_MODELS` constant. **Lazy resolution** (memoized on first call) keeps module-load free of side effects, so `vi.mock('@veo-core/constants', …)` injected before the first call sees its substitutes. The test helper resets the memoization between tests. This removes the previous ambiguity (a parameter named `availableModels` implied a runtime-computed set, contradicting "static" framing).
 
-`AVAILABLE_MODELS` is populated during Foundation implementation by empirically probing each documented model ID against the API. Once pinned, changes go through a Foundation-touching PR per the maintenance protocol (§6). Runtime invocations use the ID resolved at module load — there is no per-call retry on API error. If the chosen model returns 404/403 during generation, that's a real error surfaced verbatim.
+`AVAILABLE_MODELS` is populated during Foundation implementation by empirically probing each documented model ID against the API. Once pinned, changes go through a Foundation-touching PR per the maintenance protocol (§6). Runtime invocations use the ID **resolved on the first call to `resolveDefaultModel()` and memoized** — subsequent calls return the cached value without re-evaluating. There is no per-call retry on API error. If the chosen model returns 404/403 during generation, that's a real error surfaced verbatim.
 
 **Escape valve for new models**: `AVAILABLE_MODELS` only gates the **default** selection. Users can always pass `--model <any-id>` explicitly — Foundation forwards the value verbatim to the API. This means if Google ships Veo 3.2 before a maintainer updates `AVAILABLE_MODELS`, users aren't blocked: they pass `--model veo-3.2-generate-001` and the request goes through (the API itself validates the ID). The Foundation-touching PR for the constant follows when convenient, not as a blocker.
 
@@ -325,7 +327,7 @@ export interface VeoConfig {
   prompt: string
   model?: string
   aspectRatio?: '16:9' | '9:16'
-  durationSeconds?: number        // Foundation enforces MODEL_DURATIONS[model] via validation (Veo 3.x → {4,6,8}; Veo 2 → {5,6,7,8}); sub-projects like /veo-extend may allow larger values
+  durationSeconds?: number        // Default 4 (matches existing /veo hero-background regression test). Foundation enforces MODEL_DURATIONS[model] via validation (Veo 3.x → {4,6,8}; Veo 2 → {5,6,7,8}); sub-projects like /veo-extend may allow larger values
   resolution?: '720p' | '1080p' | '4k'
   generateAudio?: boolean
   sampleCount?: number
@@ -413,6 +415,52 @@ export const MODEL_SUGGESTIONS: Record<string, { quality: string; fast: string; 
 
 Both tables are pure data — no logic. `audio-default.test.ts` and `model-routing.test.ts` (in the test plan) become straightforward asserts that the constants match the spec tables. SKILL.md Phase 1 conversational logic reads from these tables rather than hardcoding the values, preventing silent drift.
 
+#### `REGIONS` constant
+
+A flat `Record<string,string>` can't express the precedence-sensitive mapping (`europe-west2` must beat `europe-*`). `REGIONS` is therefore an ordered array of exact-match entries followed by prefix-match entries:
+
+```typescript
+export const REGIONS: Array<
+  | { type: 'exact';  location: string;  region: string }
+  | { type: 'prefix'; prefix: string;    region: string }
+> = [
+  // Exact matches first — they take precedence over prefix matches.
+  { type: 'exact',  location: 'europe-west2',     region: 'uk' },
+  { type: 'exact',  location: 'europe-west6',     region: 'ch' },
+  // Prefix matches second — checked in order.
+  { type: 'prefix', prefix:   'us-',              region: 'us' },
+  { type: 'prefix', prefix:   'northamerica-',    region: 'us' },
+  { type: 'prefix', prefix:   'europe-',          region: 'eu' },
+  { type: 'prefix', prefix:   'me-',              region: 'mena' },
+  { type: 'prefix', prefix:   'asia-',            region: 'other' },
+  { type: 'prefix', prefix:   'australia-',       region: 'other' },
+  { type: 'prefix', prefix:   'southamerica-',    region: 'other' },
+]
+
+// Helper consumed by validation rule #6 (personGeneration regional restriction):
+export function detectRegion(gcpLocation?: string, envRegion?: string): string | undefined {
+  if (envRegion) return envRegion                                // VEO_REGION wins
+  if (!gcpLocation) return undefined
+  for (const entry of REGIONS) {
+    if (entry.type === 'exact'  && entry.location === gcpLocation) return entry.region
+    if (entry.type === 'prefix' && gcpLocation.startsWith(entry.prefix)) return entry.region
+  }
+  return undefined                                               // no match — auto-fix skipped
+}
+```
+
+**Fallback for unspecified use case in `MODEL_SUGGESTIONS`**: when Phase 1 cannot identify a use case (user says "just make a video"), callers use the same pattern as `AUDIO_DEFAULTS`:
+
+```typescript
+const suggested = MODEL_SUGGESTIONS[useCase] ?? {
+  quality: resolveDefaultModel(),                     // top of DEFAULT_MODEL_CHAIN
+  fast:    'veo-3.1-fast-generate-preview',
+  // lite intentionally omitted: no use case implies "lowest cost" without explicit signal
+}
+```
+
+`model-routing.test.ts` covers both the table-hit and the fallback paths.
+
 #### CLI flags added
 
 ```bash
@@ -492,7 +540,10 @@ function buildRequestBody(c: VeoConfig) {
     // Without wrapping, the API rejects the request with a malformed-instance error.
     instance.referenceImages = c.referenceImages.map(img => ({ image: encodeImage(img) }))
   }
-  // NOTE: videoExtensionInput is intentionally NOT handled here.
+  // NOTE: videoExtensionInput is intentionally NOT handled here. If callers pass it,
+  // `validateConfig` adds an explicit warning ("videoExtensionInput is not yet supported
+  // by Foundation; this field will be picked up when /veo-extend ships") so the field
+  // isn't silently ignored. The warning lands in GenerationResult.warnings.
   // VeoConfig declares it for forward-compat (so /veo-extend doesn't have to modify Foundation
   // types), but the actual API field shape — gcsUri vs operationName vs other — is not yet
   // verified against Vertex AI. /veo-extend owns the implementation: it will add the
@@ -787,7 +838,7 @@ These were Open Questions in earlier revisions of the spec and have been resolve
    | Script range | Ratio (chars per token) | Notes |
    |---|---|---|
    | Latin (default) | 3.5 | Tuned for English; reasonable for most Western languages |
-   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 0.5 | Tuned to realistic value: 1 char ≈ 2 tokens in modern tokenizers. (Earlier draft said 1.0 "over-counts safely" — that was a math error: with `tokens ≈ chars/ratio`, a *smaller* ratio means *higher* estimated tokens. 0.5 is the honest mean; the table doesn't pretend to be conservative.) |
+   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 0.5 | Conservative value for token estimation: 1 char ≈ 2 tokens. Modern CJK tokenizers are increasingly efficient (sometimes approaching 1 token per char), so 0.5 chars/token is a safe upper bound that may over-estimate slightly — appropriate for a soft warning trigger that prefers spurious warnings to silent over-the-limit prompts. (Earlier draft said 1.0 "over-counts safely" — that was a math error: with `tokens ≈ chars/ratio`, a *smaller* ratio means *higher* estimated tokens, so 1.0 would have under-counted.) |
    | Cyrillic (`Ѐ–ӿ`) | 2.0 | Conservative; varies by word morphology |
    | Arabic (`؀–ۿ`) | 2.0 | Conservative |
    | Hebrew (`֐–׿`) | 2.0 | Conservative |
@@ -824,7 +875,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. **Root infrastructure setup**: add root `package.json` with `vitest`, `ts-node`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `skills/_shared/veo-core/bootstrap.ts` (see Architecture) registering `tsconfig-paths` programmatically with `findRepoRoot()`; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`; update `.gitignore` to include `node_modules/`, `package-lock.json` (if not committing), and `coverage/`. Verify a trivial test that imports a module via `@veo-core/*` alias passes in CI before proceeding.
+1. **Root infrastructure setup**: add root `package.json` with `vitest`, `ts-node`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); **commit `package-lock.json`** alongside `package.json` (required because the CI workflow uses `npm ci`, which fails without a committed lockfile); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `skills/_shared/veo-core/bootstrap.ts` (see Architecture) registering `tsconfig-paths` programmatically with `findRepoRoot()`; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`; update `.gitignore` to include `node_modules/` and `coverage/` (NOT `package-lock.json` — it must be committed for `npm ci` to work). Verify a trivial test that imports a module via `@veo-core/*` alias passes in CI before proceeding.
 2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
 3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
