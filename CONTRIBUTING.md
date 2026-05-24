@@ -63,9 +63,12 @@ git merge origin/upstream-sync                       # merge the remote-tracking
 # (or `git rebase --continue` if you rebased). Confirm `git status` shows a clean
 # state with no in-progress merge before pushing.
 git push -u origin sync/$SYNC_DATE
-gh pr create --repo CTMobi/veo-tools --base main --fill   # then edit the auto-filled title/body before publishing —
-                                                            # --fill takes them from the last commit (often a merge commit
-                                                            # like "Merge origin/upstream-sync") which is terse for reviewers
+gh pr create --repo CTMobi/veo-tools --base main          # interactive: gh prompts for title and body so you can
+                                                            # write a real summary of which upstream changes landed and
+                                                            # how customizations reconciled. Don't pass --fill here:
+                                                            # --fill auto-publishes using the last commit message
+                                                            # (often a terse "Merge origin/upstream-sync" merge commit),
+                                                            # leaving reviewers with no useful context.
 ```
 
 **If `main` has diverged** (the `--ff-only` fails because you have commits on local `main` that aren't on `origin/main`): you've broken the "never push to main" rule, but recovery is straightforward. Confirm you have no irreplaceable uncommitted work, then reset: `git checkout main && git reset --hard origin/main`. If those local commits represent real work, branch them off first (`git checkout -b recovery/local-main`) before resetting, then port them via a normal feature PR.
