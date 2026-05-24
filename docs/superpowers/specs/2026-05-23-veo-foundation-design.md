@@ -135,11 +135,13 @@ import { register } from 'tsconfig-paths'
 // Robust against file relocation and future monorepo restructuring.
 function findRepoRoot(start: string): string {
   let dir = start
-  while (dir !== path.dirname(dir)) {
+  while (true) {
     if (fs.existsSync(path.join(dir, '.claude-plugin', 'plugin.json'))) {
       return dir
     }
-    dir = path.dirname(dir)
+    const parent = path.dirname(dir)
+    if (dir === parent) break       // hit filesystem root without finding marker
+    dir = parent
   }
   throw new Error('bootstrap.ts could not locate plugin root (no .claude-plugin/plugin.json found) from ' + start)
 }
@@ -408,10 +410,10 @@ function buildRequestBody(c: VeoConfig) {
     sampleCount:       c.sampleCount,
   }
   if (c.seed !== undefined)             parameters.seed = c.seed
-  if (c.negativePrompt)                 parameters.negativePrompt = c.negativePrompt
+  if (c.negativePrompt !== undefined)   parameters.negativePrompt = c.negativePrompt
   if (c.enhancePrompt !== undefined)    parameters.enhancePrompt = c.enhancePrompt
-  if (c.storageUri)                     parameters.storageUri = c.storageUri
-  if (c.personGeneration)               parameters.personGeneration = c.personGeneration
+  if (c.storageUri !== undefined)       parameters.storageUri = c.storageUri
+  if (c.personGeneration !== undefined) parameters.personGeneration = c.personGeneration
 
   return { instances: [instance], parameters }
 }
@@ -677,7 +679,7 @@ These were Open Questions in earlier revisions of the spec and have been resolve
    | Script range | Ratio (chars per token) | Notes |
    |---|---|---|
    | Latin (default) | 3.5 | Tuned for English; reasonable for most Western languages |
-   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 1.0 | Conservative upper bound: 1 char ≈ 1 token (realistic Japanese is closer to 0.5 chars/token but 1.0 over-counts safely for a soft warning) |
+   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 0.5 | Tuned to realistic value: 1 char ≈ 2 tokens in modern tokenizers. (Earlier draft said 1.0 "over-counts safely" — that was a math error: with `tokens ≈ chars/ratio`, a *smaller* ratio means *higher* estimated tokens. 0.5 is the honest mean; the table doesn't pretend to be conservative.) |
    | Cyrillic (`Ѐ–ӿ`) | 2.0 | Conservative; varies by word morphology |
    | Arabic (`؀–ۿ`) | 2.0 | Conservative |
    | Hebrew (`֐–׿`) | 2.0 | Conservative |
