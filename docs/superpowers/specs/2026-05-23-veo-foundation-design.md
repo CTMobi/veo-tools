@@ -397,18 +397,23 @@ Pseudocode shape (illustrative — implementation may differ):
 
 function buildRequestBody(c: VeoConfig) {
   const instance: Record<string, unknown> = { prompt: c.prompt }
-  if (c.image)               instance.image = encodeImage(c.image)
-  if (c.lastFrame)           instance.lastFrame = encodeImage(c.lastFrame)
-  if (c.referenceImages)     instance.referenceImages = c.referenceImages.map(encodeImage)
-  if (c.videoExtensionInput) instance.video = { uri: c.videoExtensionInput }
-
-  const parameters: Record<string, unknown> = {
-    aspectRatio:       c.aspectRatio,
-    durationSeconds:   c.durationSeconds,
-    resolution:        c.resolution,
-    generateAudio:     c.generateAudio,
-    sampleCount:       c.sampleCount,
+  if (c.image)                                     instance.image = encodeImage(c.image)
+  if (c.lastFrame)                                 instance.lastFrame = encodeImage(c.lastFrame)
+  if (c.referenceImages && c.referenceImages.length > 0) {
+    instance.referenceImages = c.referenceImages.map(encodeImage)
   }
+  if (c.videoExtensionInput)                       instance.video = { uri: c.videoExtensionInput }
+
+  // All parameter assignments use conditional `!== undefined` for two reasons:
+  // (1) avoid sending explicit `undefined` values in JSON (the Vertex API may reject them);
+  // (2) consistent treatment of all optional fields — nothing in this object should be
+  // present-but-undefined.
+  const parameters: Record<string, unknown> = {}
+  if (c.aspectRatio !== undefined)      parameters.aspectRatio = c.aspectRatio
+  if (c.durationSeconds !== undefined)  parameters.durationSeconds = c.durationSeconds
+  if (c.resolution !== undefined)       parameters.resolution = c.resolution
+  if (c.generateAudio !== undefined)    parameters.generateAudio = c.generateAudio
+  if (c.sampleCount !== undefined)      parameters.sampleCount = c.sampleCount
   if (c.seed !== undefined)             parameters.seed = c.seed
   if (c.negativePrompt !== undefined)   parameters.negativePrompt = c.negativePrompt
   if (c.enhancePrompt !== undefined)    parameters.enhancePrompt = c.enhancePrompt
