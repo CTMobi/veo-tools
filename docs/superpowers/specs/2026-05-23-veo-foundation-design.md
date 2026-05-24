@@ -91,7 +91,7 @@ skills/
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
       types.ts                      # VeoConfig, GenerationResult, ValidationResult, ImageInput, VertexImage
       image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
-      constants.ts                  # AVAILABLE_MODELS, DEFAULT_MODEL_CHAIN, MODEL_DURATIONS, MODEL_SAMPLE_MAX, AUDIO_DEFAULTS, MODEL_SUGGESTIONS, REGIONS, MAX_TOKENS, TOKEN_WARNING_THRESHOLD
+      constants.ts                  # AVAILABLE_MODELS, DEFAULT_MODEL_CHAIN, MODEL_DURATIONS, MODEL_SAMPLE_MAX, AUDIO_DEFAULTS, DURATION_SUGGESTIONS, MODEL_SUGGESTIONS, REGIONS, MAX_TOKENS, TOKEN_WARNING_THRESHOLD
   veo/
     scripts/
       veo-generate.ts               # thin CLI wrapper (~150 lines target, was 595)
@@ -183,7 +183,7 @@ Rationale for choosing aliases over relative imports: we are already adding root
 | Module | Public API | Internal |
 |---|---|---|
 | `auth.ts` | `getAccessToken(): Promise<string>` | **Uses `google-auth-library`** npm package (not shelled-out `gcloud` CLI). Supports Service Accounts, ADC, and Workload Identity natively. Removes dependency on gcloud CLI being installed in the execution context — important for CI/CD and containerized usage. The previous `gcloud auth print-access-token` call in `veo-generate.ts` is replaced. |
-| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx) — and uses a **30-second total-request timeout** appropriate for short metadata calls. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 5**, validates non-2xx/3xx → throws with status + body, cleans up partial files on error; uses a **socket idle timeout of 30s** rather than total-request, since large video downloads — especially 4K 8s clips — can legitimately exceed 30s of wall-clock; **on each redirect, if the target origin differs from the current request's origin, the `Authorization` header is stripped before following** — this prevents Vertex bearer tokens leaking to e.g. signed GCS URLs on `storage.googleapis.com`, which already carry their own auth and would also reject a bearer token) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
+| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx) — and uses a **30-second total-request timeout** appropriate for short metadata calls. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 5**, validates non-2xx/3xx → throws with status + body, cleans up partial files on error; uses a **socket idle timeout of 30s** plus a **max total duration of 15 minutes** as a belt-and-suspenders guard against connections that keep sending bytes at near-zero throughput — neither limit alone protects against the other; **on each redirect, if the target origin differs from the current request's origin, the `Authorization` header is stripped before following** — where *origin* is `scheme + host + port` per RFC 6454, so HTTPS→HTTP redirects on the same host are cross-origin even though hostname matches — this prevents Vertex bearer tokens leaking to e.g. signed GCS URLs on `storage.googleapis.com`, which already carry their own auth and would also reject a bearer token) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
 | `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
@@ -327,7 +327,7 @@ export interface VeoConfig {
   prompt: string
   model?: string
   aspectRatio?: '16:9' | '9:16'
-  durationSeconds?: number        // Default 4 (matches existing /veo hero-background regression test). Foundation enforces MODEL_DURATIONS[model] via validation (Veo 3.x → {4,6,8}; Veo 2 → {5,6,7,8}); sub-projects like /veo-extend may allow larger values
+  durationSeconds?: number        // CLI/library default: 8 (matches existing veo-generate.ts and README). Use-case-aware overrides come from Phase 1 SKILL.md via DURATION_SUGGESTIONS (see §2). Foundation enforces MODEL_DURATIONS[model] via validation (Veo 3.x → {4,6,8}; Veo 2 → {5,6,7,8}); sub-projects like /veo-extend may allow larger values
   resolution?: '720p' | '1080p' | '4k'
   generateAudio?: boolean
   sampleCount?: number
@@ -402,7 +402,30 @@ export const AUDIO_DEFAULTS: Record<string, boolean> = {
   // Callers check `AUDIO_DEFAULTS[useCase] ?? true` to apply this fallback.
 }
 
+export const DURATION_SUGGESTIONS: Record<string, number> = {
+  // Phase 1 UNDERSTAND consults this when crafting the CLI invocation.
+  // The user's explicit --duration always wins; this is just a SKILL.md
+  // hint, not a CLI default. Library/CLI default remains 8 (see VeoConfig).
+  'hero-background': 4,   // 4s = smoother loop (less motion to reconcile at loop point)
+  'ambient':         4,
+  'loop':            4,
+  'social':          8,
+  'marketing':       8,
+  'product':         8,
+  'storytelling':    8,
+  // Unspecified use case → callers fall through to the CLI default (8).
+}
+
 export const MODEL_SUGGESTIONS: Record<string, { quality: string; fast: string; lite?: string }> = {
+  // Asymmetry rationale:
+  //   - social uses preview (3.1) because social media tolerates latest features
+  //     and benefits from highest quality for short attention spans.
+  //   - marketing/product/storytelling use stable (3.0) because production brand
+  //     content prefers reliability over latest features.
+  //   - hero-background/ambient/loop include `lite` because high-volume hero/ambient
+  //     loops on landing pages benefit from cost optimization; social does not
+  //     because lite is image-to-video only (not text-to-video) — out of scope for
+  //     pure social ad text generation.
   'hero-background': { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
   'ambient':         { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
   'loop':            { quality: 'veo-3.1-generate-preview',      fast: 'veo-3.1-fast-generate-preview', lite: 'veo-3.1-lite-generate-preview' },
@@ -792,14 +815,15 @@ Run on every PR via the new CI workflow; mock or pure functions only.
 
 Checklist in `docs/foundation-release-checklist.md`, executed before merge. ~6-8 generations with cost cap:
 
-1. Default hero background (regression: audio off, 720p, 4s, loop flags)
-2. Marketing with audio on (dialogue + SFX present in output audio track)
-3. 1080p forces duration=8 (auto-fix observable in Phase 4 PRESENT log)
-4. 4K + 8s (new capability succeeds)
-5. `negativePrompt` excludes targeted element (qualitative check)
-6. `enhancePrompt=false` produces visibly different output from `enhancePrompt=true` with same prompt
-7. Veo 2 + audio=on → auto-fix to audio=off (validation log captured)
-8. Lite model generates successfully at lower cost (cost log captured)
+1. Default hero background via SKILL.md (regression: Phase 1 use case=`hero-background` → audio off, 720p, 4s via DURATION_SUGGESTIONS, loop flags). Verifies the SKILL.md path applies use-case-aware overrides correctly.
+2. Default bare CLI invocation: `--prompt "..."` with no other flags → 8s, 720p, audio on (regression for the CLI/library default — confirms no use-case override has leaked into the library default chain)
+3. Marketing with audio on (dialogue + SFX present in output audio track)
+4. 1080p forces duration=8 (auto-fix observable in Phase 4 PRESENT log)
+5. 4K + 8s (new capability succeeds)
+6. `negativePrompt` excludes targeted element (qualitative check)
+7. `enhancePrompt=false` produces visibly different output from `enhancePrompt=true` with same prompt
+8. Veo 2 + audio=on → auto-fix to audio=off (validation log captured)
+9. Lite model generates successfully at lower cost (cost log captured)
 
 PR description includes the checklist with checkmarks and links to generated videos.
 
@@ -898,6 +922,6 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 - `wc -l skills/veo-multi-shot/scripts/veo-multi-generate.ts` substantially smaller, same intent as above.
 - CI workflow runs on PR and fails when any unit test fails.
 - 100% of rules in §3 have unit tests; `vitest` reports pass on a clean checkout.
-- Manual integration checklist passes 8/8.
+- Manual integration checklist passes 9/9.
 - `/veo` SKILL.md documents every new parameter with at least one example.
 - A subsequent sub-project (e.g., `/veo-animate`) can be added by creating only a new skill folder + thin CLI, importing all infrastructure from `_shared/veo-core/`.
