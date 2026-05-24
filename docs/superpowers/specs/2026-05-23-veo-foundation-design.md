@@ -61,7 +61,7 @@ Foundation is the enabling block: all four downstream sub-projects depend on the
 
 **Goals**
 - Zero regression on existing workflows: every prompt that works today must still work after Foundation.
-- Foundation must reduce per-script line count from ~600 to <150 by extracting shared code (target aligned with Success criteria).
+- Foundation must reduce per-script line count substantially by extracting shared code (target: ~150 lines, accept up to ~200 if clarity demands; baseline 595 lines). The point is the refactor extracted the right concerns into `_shared/`, not hitting a specific number.
 - New skills (`/veo-animate` etc.) must be implementable by writing only a CLI + workflow, not new auth/polling/validation code.
 - Audio native becomes a first-class option when use case warrants it, never silently lost when use case warrants it.
 
@@ -75,21 +75,25 @@ Foundation is the enabling block: all four downstream sub-projects depend on the
 ### Directory layout
 
 ```
+tsconfig.json                       # NEW root tsconfig — declares @veo-core/* path alias (see Architecture text)
+vitest.config.ts                    # NEW root vitest config — mirrors tsconfig paths so tests resolve alias
+package.json                        # NEW root package.json — deps for runtime (google-auth-library, @google-cloud/storage, tsconfig-paths) + dev (vitest, typescript, @types/node)
+.github/workflows/test.yml          # NEW CI workflow
+
 skills/
-  _shared/                          # NEW — non-skill code (underscore prefix excludes from skill loader)
+  _shared/                          # NEW — non-skill code (no SKILL.md → loader skips it; underscore is defensive convention)
     veo-core/
-      auth.ts                       # getAccessToken() — single source of truth
+      auth.ts                       # getAccessToken() — uses google-auth-library
       api.ts                        # makeRequest, downloadFile, polling
       generate.ts                   # generateVideo(config) — unified entry
-      validation.ts                 # validateConfig(config) — cross-parameter rules
+      validation.ts                 # FOUNDATION_RULES, createValidator() factory
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
       types.ts                      # VeoConfig, GenerationResult, InputMode, ValidationResult, ImageInput
       image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
-      constants.ts                  # MODELS, REGIONS, MAX_TOKENS, MAX_REFERENCE_IMAGES
-      tsconfig.json                 # ES target, paths
+      constants.ts                  # MODELS, REGIONS, MAX_TOKENS, MAX_REFERENCE_IMAGES, MODEL_DURATIONS
   veo/
     scripts/
-      veo-generate.ts               # thin CLI wrapper (<150 lines, was 595)
+      veo-generate.ts               # thin CLI wrapper (~150 lines target, was 595)
     SKILL.md                        # updated with new params + audio context-aware
     references/
       cinematography-lexicon.md     # existing
@@ -105,7 +109,7 @@ skills/
 
 The `_shared/` directory is excluded from skill discovery because it contains **no `SKILL.md`** — the Claude Code skill loader scans for `SKILL.md` files, not directory naming. The underscore prefix is a defensive convention (makes the intent visually obvious and avoids ambiguity with future loader rules), but the operative exclusion mechanism is the absence of `SKILL.md`. *To verify before implementation: confirm the current loader behavior in Claude Code; if loader rules ever change to scan by directory name, revisit.*
 
-Consuming skills reference `_shared/` via the **`@veo-core/*` path alias**, configured in a root `tsconfig.json` added as part of Foundation's infrastructure setup (alongside the root `package.json` and CI workflow — see migration plan step 1). The alias resolves automatically via the **`tsconfig-paths`** package: each script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"`, and `vitest.config.ts` references the same `tsconfig.json`. Example: `import { generateVideo } from '@veo-core/generate'`.
+Consuming skills reference `_shared/` via the **`@veo-core/*` path alias**, configured in the **root `tsconfig.json`** (added to the repository root by migration step 1, alongside `package.json`, `vitest.config.ts`, and the CI workflow — see directory layout above). The alias resolves automatically via the **`tsconfig-paths`** package: each script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"`, and `vitest.config.ts` references the same `tsconfig.json`. Example: `import { generateVideo } from '@veo-core/generate'`.
 
 We chose `tsconfig-paths` (registered globally via `NODE_OPTIONS`) over per-script `TS_NODE_PROJECT` env var management because it resolves the alias automatically across all invocations without requiring every script to export the variable. This also removes the path ambiguity that would arise from `TS_NODE_PROJECT=./tsconfig.json` resolving to whichever directory the script runs from.
 
@@ -173,9 +177,12 @@ When `storageUri` is set, `outputPath` is ignored and `GenerationResult.gcsUri` 
 | `veo-3.0-fast-generate-001` | Veo 3 fast stable | Production fast iteration | yes | 4K |
 | `veo-2.0-generate-001` | Veo 2 | Silent video, multi-sample | **no** | 720p |
 
-The current default `veo-3.1-generate-001` does not appear in official docs and may be invalid. Foundation includes empirical verification: during implementation, test which IDs return successfully from `predictLongRunning`.
+The previous script's default `veo-3.1-generate-001` does not appear in current official docs and is **dropped** from the default chain (see Resolved decisions). Foundation's default chain is:
 
-**Default model selection rule** (final): prefer the **latest generation** that works (currently Veo 3.1 preview) so users get access to newest features by default. If the latest preview is unavailable for a given account/region, fall back to the latest stable variant (`veo-3.0-generate-001`). This means the default is `veo-3.1-generate-preview` if accessible, else `veo-3.0-generate-001`. Stable preference applies *within the same generation*, not across generations.
+1. `veo-3.1-generate-preview` (preferred — latest generation)
+2. `veo-3.0-generate-001` (fallback — latest stable if preview unavailable)
+
+Stable preference applies *within the same generation*, not across generations. Users who hardcoded the legacy ID in their own scripts can continue to use it as an explicit `--model` value; Foundation just doesn't pick it as the default anymore.
 
 #### `VeoConfig` type schema — forward declarations
 
@@ -442,11 +449,15 @@ Shall I generate?
 |---|---|---|
 | Code moved to `_shared/veo-core/` | No | CLI paths unchanged (`skills/veo/scripts/veo-generate.ts` remains) |
 | Audio default changes (off → context-aware; on when use case unspecified) | **Yes, behavioral** | Documented in CHANGELOG; explicit `--no-audio` restores old behavior. Phase 4 PRESENT shows resolved audio state |
-| Default model `veo-3.1-generate-001` → verified ID | **Possibly** (if current ID is invalid) | Empirical verification first; if both work, keep current as fallback |
+| Default model `veo-3.1-generate-001` → `veo-3.1-generate-preview` (and `veo-3.0-generate-001` fallback) | **Yes, behavioral** | Documented in CHANGELOG; the legacy ID `veo-3.1-generate-001` is dropped from the default chain because it doesn't appear in current docs. Users who hardcoded the legacy ID in their own scripts can keep doing so — the spec only changes the *default*. Aligned with the "Resolved decisions" section. |
 | New `validateConfig()` rules with auto-fix | No | Auto-fix is additive; rejects only what API would reject anyway |
 | Extended `VeoConfig` type | No | All new fields optional |
 
-Plugin version in `.claude-plugin/plugin.json` is currently `1.0.0`. Foundation bumps it to `1.1.0` (semver minor — additive backwards-compatible features). The two behavioral changes (audio default, model ID resolution) are minor under semver because both have explicit override flags that restore prior behavior. New `CHANGELOG.md` (Keep-a-Changelog format) documents each change.
+Plugin version in `.claude-plugin/plugin.json` is currently `1.0.0`. Foundation bumps it to `1.1.0` (semver minor).
+
+**Rationale for minor (not major)**: the two behavioral changes (audio default derived from use case, model ID default chain) are *additive* — both have explicit override flags (`--no-audio`, `--model <id>`) that restore the previous behavior. A user who hardcoded the legacy model ID can continue passing it; a user who scripted `--audio false` (which was the previous implicit default) sees no change. The change affects only users relying on the *implicit* default for audio, which was undocumented.
+
+The new `CHANGELOG.md` (Keep-a-Changelog format) prominently documents both behavioral changes so consumers can adjust if needed. If field experience shows users actually broke from the audio-default change, we'll consider a 1.x → 2.0.0 retroactive declaration in the next release.
 
 ### 6. Pricing strategy
 
@@ -480,7 +491,7 @@ To prevent 4 downstream sub-projects from each forking the pricing table or mode
 The repository currently has **no test runner, no `.github/workflows/`, and no existing test suite**. Foundation must introduce these before unit tests are meaningful as a quality gate. Concretely:
 
 - **Test runner**: add `vitest` (TypeScript-native, no transpile step, ESM-friendly) as a devDependency. Lightweight enough to fit a plugin that previously had no build infrastructure.
-- **`package.json`**: introduce at repo root with `devDependencies: { vitest, typescript, @types/node }` and `dependencies: { google-auth-library, tsconfig-paths }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`. Note: `tsconfig-paths` is a runtime dependency (used by `-r tsconfig-paths/register` in script invocations), not a dev-only tool.
+- **`package.json`**: introduce at repo root with `devDependencies: { vitest, typescript, @types/node }` and `dependencies: { google-auth-library, @google-cloud/storage, tsconfig-paths }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`. Notes: `tsconfig-paths` is a runtime dep (used by `-r tsconfig-paths/register` at script invocation). `@google-cloud/storage` is needed by `image-helpers.ts`'s `uploadImageToGcs` and by `storageUri` handling — shipped in Foundation so downstream sub-projects don't have to add it.
 - **CI workflow**: add `.github/workflows/test.yml` running `npm ci && npm test` on pull requests against `main`. No deployment, no integration with paid APIs (those remain manual per release checklist).
 - **No CI for billed integration tests**: the manual release checklist (paid, ~$X per round) is explicitly out of CI scope; it runs once before merge by the maintainer.
 
@@ -541,7 +552,7 @@ These were Open Questions in earlier revisions of the spec and have been resolve
    | Script range | Ratio (chars per token) | Notes |
    |---|---|---|
    | Latin (default) | 3.5 | Tuned for English; reasonable for most Western languages |
-   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 1.5 | Each character often = multiple tokens |
+   | CJK (`一–鿿`, `぀–ヿ`, `가–힯`) | 1.0 | Conservative upper bound: 1 char ≈ 1 token (realistic Japanese is closer to 0.5 chars/token but 1.0 over-counts safely for a soft warning) |
    | Cyrillic (`Ѐ–ӿ`) | 2.0 | Conservative; varies by word morphology |
    | Arabic (`؀–ۿ`) | 2.0 | Conservative |
    | Hebrew (`֐–׿`) | 2.0 | Conservative |
@@ -564,15 +575,15 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. **Root infrastructure setup**: add root `package.json` with `vitest`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `tsconfig-paths` (deps — both used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Each skill script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"` so the alias resolves automatically without per-script env var management. Verify a trivial test resolves `@veo-core/*` and passes in CI before proceeding.
+1. **Root infrastructure setup**: add root `package.json` with `vitest`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `@google-cloud/storage`, `tsconfig-paths` (deps — all used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Each skill script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"` so the alias resolves automatically without per-script env var management. Verify a trivial test resolves `@veo-core/*` and passes in CI before proceeding.
 2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
 3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
 5. Refactor `skills/veo-multi-shot/scripts/veo-multi-generate.ts` similarly.
 6. Add new cross-cutting parameters + CLI flags to `_shared` and `veo-generate.ts`.
-7. Implement `validation.ts` with Foundation rules (#1–#8) and the `registerRule()` API for future sub-project rules.
+7. Implement `validation.ts` with Foundation rules (#1–#9), exporting `FOUNDATION_RULES` array and the `createValidator({ baseRules, extraRules })` factory so sub-projects can compose their own validators without modifying Foundation.
 8. Implement `pricing.ts` with verified table + dated header.
-9. Empirical verification of Open Questions #1 (default model ID) and #4 (`sampleCount` per model); update `constants.ts`.
+9. Empirical verification of Open Questions #3 (`sampleCount` per model) and #4 (Veo 2 allowed durations); update `constants.ts`. Also: probe Veo 2 capability vs current Veo 3 IDs to confirm the default chain (`veo-3.1-generate-preview` → `veo-3.0-generate-001` fallback) works as documented.
 10. Update `skills/veo/SKILL.md`: new params section, audio context-aware logic, updated workflow phases, new model decision table.
 11. Update `skills/veo/validation/prompt-checklist.md`: soften obsolete rules.
 12. Write `skills/veo/references/audio-lexicon.md`.
@@ -583,8 +594,8 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 ## Success criteria
 
 - All existing `veo-generate.ts` example invocations from current README still succeed with identical output (modulo audio default change — explicitly documented).
-- `wc -l skills/veo/scripts/veo-generate.ts` < 150 lines after refactor (was 595).
-- `wc -l skills/veo-multi-shot/scripts/veo-multi-generate.ts` < 150 lines after refactor.
+- `wc -l skills/veo/scripts/veo-generate.ts` substantially smaller than the 595-line baseline (target: ~150 lines, accept up to ~200 if clarity demands). The metric is "did the refactor extract the right concerns into `_shared/`?", not a hard line budget.
+- `wc -l skills/veo-multi-shot/scripts/veo-multi-generate.ts` substantially smaller, same intent as above.
 - CI workflow runs on PR and fails when any unit test fails.
 - 100% of rules in §3 have unit tests; `vitest` reports pass on a clean checkout.
 - Manual integration checklist passes 8/8.
