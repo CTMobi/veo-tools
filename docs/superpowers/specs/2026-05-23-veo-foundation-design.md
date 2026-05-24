@@ -154,7 +154,7 @@ When `storageUri` is set, `outputPath` is ignored and `GenerationResult.gcsUri` 
 
 | Parameter | Type | Valid values | Default | Notes |
 |---|---|---|---|---|
-| `negativePrompt` | string | free text (no "no/don't") | `undefined` | List excluded elements, e.g., `"text overlays, logos, watermarks"` |
+| `negativePrompt` | string | free text | `undefined` | List excluded elements, e.g., `"text overlays, logos, watermarks"`. **Guidance** (not enforced): avoid imperative phrasing like "no X" or "don't show X" — the API treats negative prompts as a list of unwanted elements, not as instructions. |
 | `enhancePrompt` | boolean | true / false | `true` | Google rewrites prompt internally; disable for power users |
 | `storageUri` | string | `gs://bucket/path/` | `undefined` | If set, video stored on GCS instead of local download |
 | `personGeneration` | enum | `allow_all` \| `allow_adult` \| `dont_allow` | model/region default | Regional restrictions apply (EU/UK/CH/MENA) |
@@ -187,7 +187,7 @@ export interface VeoConfig {
   prompt: string
   model?: string
   aspectRatio?: '16:9' | '9:16'
-  durationSeconds?: number        // Foundation enforces {4,6,8} via validation; sub-projects (e.g., /veo-extend) may allow larger values
+  durationSeconds?: number        // Foundation enforces MODEL_DURATIONS[model] via validation (Veo 3.x → {4,6,8}; Veo 2 → {5,6,7,8}); sub-projects like /veo-extend may allow larger values
   resolution?: '720p' | '1080p' | '4k'
   generateAudio?: boolean
   sampleCount?: number
@@ -205,7 +205,7 @@ export interface VeoConfig {
 }
 ```
 
-Foundation's `validateConfig()` ignores the forward-declared fields. Each sub-project adds rules via `registerRule()` (see §3) without modifying `VeoConfig`.
+Foundation's `validateConfig()` ignores the forward-declared fields. Each sub-project composes its own validator via `createValidator()` (see §3) without modifying `VeoConfig`.
 
 #### CLI flags added
 
@@ -307,17 +307,41 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 | 2 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
 | 3 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
 | 4 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
-| 5 | `prompt.tokens` estimated to exceed 1024 (Latin-script approx: chars / 3.5; non-Latin multipliers per Open Question #3) | **Warning only** when estimated tokens > 900. **Never rejected client-side** — the Veo API has no `countTokens` endpoint (verified against Vertex AI / Gemini API / Veo model docs), so any local heuristic produces false positives. The API rejects oversize prompts immediately with a clear error before generation starts, which is surfaced verbatim in Phase 5. | Foundation |
-| 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #2 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
-| 7 | `sampleCount ∈ [1, model-max]` (see Open Question #4) | "sampleCount out of range for selected model" | Foundation |
+| 5 | `prompt.tokens` estimated to exceed 1024 (Latin-script approx: chars / 3.5; non-Latin multipliers per Open Question #2) | **Warning only** when estimated tokens > 900. **Never rejected client-side** — the Veo API has no `countTokens` endpoint (verified against Vertex AI / Gemini API / Veo model docs), so any local heuristic produces false positives. The API rejects oversize prompts immediately with a clear error before generation starts, which is surfaced verbatim in Phase 5. | Foundation |
+| 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #1 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
+| 7 | `sampleCount ∈ [1, model-max]` (see Open Question #3) | "sampleCount out of range for selected model" | Foundation |
 | 8 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
+| 9 | `storageUri` unset ⇒ `outputPath` must be provided | "Output destination required: pass `outputPath` or set `storageUri`" | Foundation |
 | F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
 | F2 | `lastFrame` present ⇒ `durationSeconds == 8` AND `image` present | — | `/veo-interpolate` |
 | F3 | Video extension input ⇒ `resolution == 720p` | — | `/veo-extend` |
 | F4 | `model ∈ veo-3.1-lite-*` ⇒ no `referenceImages`, no extension | — | `/veo-multi-shot v2` + `/veo-extend` |
 | F5 | `referenceImages.length ∈ [1, 3]` | — | `/veo-multi-shot v2` |
 
-The `validation.ts` rule registry is designed to accept additions: each sub-project adds its own rules without modifying Foundation rules. Foundation exposes a `registerRule(rule: ValidationRule)` API for this.
+**Rule composition: factory pattern, not global registry.** `validation.ts` exports `FOUNDATION_RULES` (the array of Foundation-owned rules above) and a `createValidator()` factory:
+
+```typescript
+type ValidationRule = (config: VeoConfig) => RuleResult  // RuleResult = ok | warning | error | autoFix
+
+export const FOUNDATION_RULES: ValidationRule[] = [/* rules #1–#9 */]
+
+export function createValidator(opts: {
+  baseRules?: ValidationRule[]      // defaults to FOUNDATION_RULES
+  extraRules?: ValidationRule[]     // sub-project rules
+}): (config: VeoConfig) => ValidationResult
+```
+
+Each skill builds its own validator instance from `FOUNDATION_RULES` plus its own rules:
+
+```typescript
+// in /veo-animate's CLI:
+import { createValidator, FOUNDATION_RULES } from '@veo-core/validation'
+import { animateRules } from './rules'  // [imageRequiredRule, durationEightRule]
+
+const validate = createValidator({ extraRules: animateRules })
+```
+
+This avoids the pitfalls of a global mutable registry (`registerRule()` was the earlier design): no cross-skill leakage from module-level singletons, no test order dependence, each skill explicitly opts into the rules it applies. Foundation ships `FOUNDATION_RULES` and `createValidator`; sub-projects ship their own rule arrays and import the factory.
 
 #### Auto-corrections
 
@@ -456,7 +480,7 @@ To prevent 4 downstream sub-projects from each forking the pricing table or mode
 The repository currently has **no test runner, no `.github/workflows/`, and no existing test suite**. Foundation must introduce these before unit tests are meaningful as a quality gate. Concretely:
 
 - **Test runner**: add `vitest` (TypeScript-native, no transpile step, ESM-friendly) as a devDependency. Lightweight enough to fit a plugin that previously had no build infrastructure.
-- **`package.json`**: introduce at repo root with `devDependencies: { vitest, typescript, @types/node, tsconfig-paths }` and `dependencies: { google-auth-library }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`.
+- **`package.json`**: introduce at repo root with `devDependencies: { vitest, typescript, @types/node }` and `dependencies: { google-auth-library, tsconfig-paths }`, plus `scripts: { test: "vitest run", "test:watch": "vitest" }`. Note: `tsconfig-paths` is a runtime dependency (used by `-r tsconfig-paths/register` in script invocations), not a dev-only tool.
 - **CI workflow**: add `.github/workflows/test.yml` running `npm ci && npm test` on pull requests against `main`. No deployment, no integration with paid APIs (those remain manual per release checklist).
 - **No CI for billed integration tests**: the manual release checklist (paid, ~$X per round) is explicitly out of CI scope; it runs once before merge by the maintainer.
 
@@ -491,10 +515,17 @@ PR description includes the checklist with checkmarks and links to generated vid
 
 At each release, the maintainer re-reads the official pricing URL and confirms the lookup table is current. The "Last updated" comment in `pricing.ts` is the audit trail.
 
+## Resolved decisions
+
+These were Open Questions in earlier revisions of the spec and have been resolved through documentation review or explicit user direction. Kept here as audit trail:
+
+- **Default model ID**: `veo-3.1-generate-preview` (latest generation; falls back to `veo-3.0-generate-001` if unavailable). Legacy ID `veo-3.1-generate-001` was not found in current docs and is dropped.
+- **Import strategy**: `@veo-core/*` path alias via `tsconfig-paths`. Choice motivated by the four downstream sub-projects all importing from `_shared/`.
+- **Token counting** (rule #5) **never hard-rejects**: verified Veo has no `countTokens` endpoint. See rule #5 description and Open Question #2 for the script-aware heuristic that powers the soft warning.
+
 ## Open questions
 
-1. **Default model ID** — *resolved (no longer open)*: the spec sets `veo-3.1-generate-preview` as default per the "Default model selection rule" in §1 (latest generation; falls back to `veo-3.0-generate-001` if unavailable). The legacy ID `veo-3.1-generate-001` referenced in the previous script does not appear in current docs and is dropped; if empirical verification during implementation shows the legacy ID still works as an alias, no action — the preview ID remains the documented choice.
-2. **Region detection**: rule #6 (`personGeneration` regional restriction) requires knowing the user's region for proactive auto-fix. Resolution is **two-tier**:
+1. **Region detection**: rule #6 (`personGeneration` regional restriction) requires knowing the user's region for proactive auto-fix. Resolution is **two-tier**:
 
    - **Tier 1 — explicit `VEO_REGION` env var**: values `us`, `eu`, `uk`, `ch`, `mena`, `other`. Highest priority.
    - **Tier 2 — inferred from `GOOGLE_CLOUD_LOCATION`** (already used for Vertex AI endpoint URL). Mapping in `constants.ts`:
@@ -505,7 +536,7 @@ At each release, the maintainer re-reads the official pricing URL and confirms t
    - If neither is set or the inference yields no match, auto-fix is skipped and the API error (if any) is surfaced verbatim in Phase 5 GENERATE.
 
    The inference is best-effort — users with multi-region setups can override via `VEO_REGION`.
-3. **Token counting** (rule #5): heuristic varies by script. Foundation uses per-script multipliers detected via Unicode range scan, with conservative defaults to avoid underestimation:
+2. **Token counting** (rule #5): heuristic varies by script. Foundation uses per-script multipliers detected via Unicode range scan, with conservative defaults to avoid underestimation:
 
    | Script range | Ratio (chars per token) | Notes |
    |---|---|---|
@@ -519,7 +550,8 @@ At each release, the maintainer re-reads the official pricing URL and confirms t
    Detection: count chars per script; the dominant range determines the multiplier (>30% threshold). Mixed prompts default to the most restrictive multiplier among present scripts. Mitigation tiers: (a) rule #5 acts as a **soft warning** at >900 estimated tokens — **never a hard reject** (see rationale below); (b) when a non-Latin multiplier is used, the warning notes "estimate approximate for non-Latin content"; (c) Phase 5 API-side token errors are surfaced verbatim and tagged for the maintainer to revisit the ratios.
 
    **No `countTokens` pre-flight check** — verified against Vertex AI multimodal docs, Vertex AI REST reference, Gemini API tokens doc, and the Veo 3.1 model page: the `countTokens` endpoint supports only Gemini models (Gemini 3.1 Flash-Lite/Pro/Image, 3 Flash/Pro Image, 2.5 Pro/Flash variants). Veo is **not** in the supported list, and no per-model token counter exists. Any local heuristic would therefore produce false positives. Foundation accepts this and lets the Veo backend enforce the limit; the API's error message surfaces immediately (validation backend, not after the 2-4 min generation), so the UX cost of a missed warning is minimal.
-4. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
+3. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
+4. **Veo 2 allowed durations**: official doc states a "5-8 seconds" range. It's unclear whether all integer values in that range are accepted or only specific values (e.g., 5/6/7/8 vs only 5/8). Foundation provisionally sets `MODEL_DURATIONS["veo-2.0-generate-001"] = {5, 6, 7, 8}` (rule #1) and verifies empirically during implementation by submitting each value and recording which succeed. The discovered set is encoded in `constants.ts`. Veo 3.x is well-documented at `{4, 6, 8}` and does not need this verification.
 
 ## Risks & contingency
 
@@ -532,7 +564,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. **Root infrastructure setup**: add root `package.json` with `vitest`, `typescript`, `@types/node`, `tsconfig-paths` (devDeps) and `google-auth-library` (dep); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Each skill script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"` so the alias resolves automatically without per-script env var management. Verify a trivial test resolves `@veo-core/*` and passes in CI before proceeding.
+1. **Root infrastructure setup**: add root `package.json` with `vitest`, `typescript`, `@types/node` (devDeps) and `google-auth-library`, `tsconfig-paths` (deps — both used at runtime by scripts); add root `tsconfig.json` declaring the `@veo-core/*` path alias → `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same `tsconfig.json` so tests resolve the alias; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Each skill script invokes `ts-node` with `NODE_OPTIONS="-r tsconfig-paths/register"` so the alias resolves automatically without per-script env var management. Verify a trivial test resolves `@veo-core/*` and passes in CI before proceeding.
 2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
 3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
