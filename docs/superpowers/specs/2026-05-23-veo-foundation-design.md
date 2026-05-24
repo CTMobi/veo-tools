@@ -127,20 +127,21 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { register } from 'tsconfig-paths'
 
-// Walk upward from this file looking for the repository root.
-// Markers: both package.json AND .git must be present — neither alone is sufficient
-// (a sub-package could have its own package.json; a submodule could have its own .git).
+// Walk upward from this file looking for the plugin root.
+// Marker: .claude-plugin/plugin.json — uniquely identifies the veo-tools
+// plugin root, survives environments where .git is absent (CI source
+// archives, container builds, npm pack installs), and disambiguates from
+// any sub-package or vendored copy that has its own package.json.
 // Robust against file relocation and future monorepo restructuring.
 function findRepoRoot(start: string): string {
   let dir = start
   while (dir !== path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, 'package.json')) &&
-        fs.existsSync(path.join(dir, '.git'))) {
+    if (fs.existsSync(path.join(dir, '.claude-plugin', 'plugin.json'))) {
       return dir
     }
     dir = path.dirname(dir)
   }
-  throw new Error('bootstrap.ts could not locate repo root from ' + start)
+  throw new Error('bootstrap.ts could not locate plugin root (no .claude-plugin/plugin.json found) from ' + start)
 }
 
 const REPO_ROOT = findRepoRoot(__dirname)
@@ -434,7 +435,7 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 | 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #1 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
 | 7 | `sampleCount ∈ [1, model-max]` (see Open Question #3) | "sampleCount out of range for selected model" | Foundation |
 | 8 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
-| 9 | `storageUri` unset ⇒ `outputPath` must be set on `VeoConfig` | "Output destination required: set `outputPath` or `storageUri`" | Foundation |
+| 9 | Exactly one of `outputPath` or `storageUri` must be set on `VeoConfig` | Neither set → "Output destination required: set `outputPath` or `storageUri`". Both set → "Ambiguous output: set either `outputPath` or `storageUri`, not both" | Foundation |
 | F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
 | F2 | `lastFrame` present ⇒ `durationSeconds == 8` AND `image` present | — | `/veo-interpolate` |
 | F3 | Video extension input ⇒ `resolution == 720p` | — | `/veo-extend` |
