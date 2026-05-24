@@ -91,7 +91,7 @@ skills/
       pricing.ts                    # estimateCost(config) per model × resolution × duration × audio × sampleCount
       types.ts                      # VeoConfig, GenerationResult, ValidationResult, ImageInput, VertexImage
       image-helpers.ts              # MIME validation, base64 encoding, GCS upload helpers (used by future sub-projects)
-      constants.ts                  # AVAILABLE_MODELS, DEFAULT_MODEL_CHAIN, MODEL_DURATIONS, MODEL_SAMPLE_MAX, AUDIO_DEFAULTS, MODEL_SUGGESTIONS, REGIONS, MAX_TOKENS, TOKEN_WARNING_THRESHOLD, MAX_REFERENCE_IMAGES
+      constants.ts                  # AVAILABLE_MODELS, DEFAULT_MODEL_CHAIN, MODEL_DURATIONS, MODEL_SAMPLE_MAX, AUDIO_DEFAULTS, MODEL_SUGGESTIONS, REGIONS, MAX_TOKENS, TOKEN_WARNING_THRESHOLD
   veo/
     scripts/
       veo-generate.ts               # thin CLI wrapper (~150 lines target, was 595)
@@ -165,7 +165,7 @@ register({
 })
 ```
 
-Every entry point (each `*-generate.ts` CLI, every test file using the alias) imports the bootstrap **as its first line**:
+Every runtime CLI entry point (each `*-generate.ts`) imports the bootstrap **as its first line**:
 
 ```typescript
 #!/usr/bin/env npx ts-node
@@ -183,7 +183,7 @@ Rationale for choosing aliases over relative imports: we are already adding root
 | Module | Public API | Internal |
 |---|---|---|
 | `auth.ts` | `getAccessToken(): Promise<string>` | **Uses `google-auth-library`** npm package (not shelled-out `gcloud` CLI). Supports Service Accounts, ADC, and Workload Identity natively. Removes dependency on gcloud CLI being installed in the execution context — important for CI/CD and containerized usage. The previous `gcloud auth print-access-token` call in `veo-generate.ts` is replaced. |
-| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx) — and uses a **30-second total-request timeout** appropriate for short metadata calls. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 5**, validates non-2xx/3xx → throws with status + body, cleans up partial files on error; uses a **socket idle timeout of 30s** rather than total-request, since large video downloads — especially 4K 8s clips — can legitimately exceed 30s of wall-clock) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
+| `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(target, path, token): Promise<void>` (where `target` is either an `https://…` URL or a `gs://…` URI) | URL building, request handling. `makeRequest` (internal) handles HTTPS API calls — does **not** follow redirects (the predict/poll endpoints are not expected to return 3xx) — and uses a **30-second total-request timeout** appropriate for short metadata calls. `downloadFile` accepts both `https://` (downloads via HTTPS, follows redirects manually with a **max-depth limit of 5**, validates non-2xx/3xx → throws with status + body, cleans up partial files on error; uses a **socket idle timeout of 30s** rather than total-request, since large video downloads — especially 4K 8s clips — can legitimately exceed 30s of wall-clock; **on each redirect, if the target origin differs from the current request's origin, the `Authorization` header is stripped before following** — this prevents Vertex bearer tokens leaking to e.g. signed GCS URLs on `storage.googleapis.com`, which already carry their own auth and would also reject a bearer token) and `gs://` (downloads via `@google-cloud/storage` client — that library handles its own retries and timeouts). The Vertex AI Veo API can return either form in `status.videoUrl` depending on project configuration. |
 | `generate.ts` | `generateVideo(config: VeoConfig): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). Output destination is read from `config.outputPath` or `config.storageUri`; exactly one must be set, enforced by validation rule #9. |
 | `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
@@ -488,7 +488,9 @@ function buildRequestBody(c: VeoConfig) {
   if (c.image !== undefined)                       instance.image = encodeImage(c.image)
   if (c.lastFrame !== undefined)                   instance.lastFrame = encodeImage(c.lastFrame)
   if (c.referenceImages !== undefined && c.referenceImages.length > 0) {
-    instance.referenceImages = c.referenceImages.map(encodeImage)
+    // Vertex Veo API expects array of {image: VertexImage}, NOT bare VertexImage[].
+    // Without wrapping, the API rejects the request with a malformed-instance error.
+    instance.referenceImages = c.referenceImages.map(img => ({ image: encodeImage(img) }))
   }
   // NOTE: videoExtensionInput is intentionally NOT handled here.
   // VeoConfig declares it for forward-compat (so /veo-extend doesn't have to modify Foundation
@@ -557,6 +559,8 @@ export function createValidator(opts: {
   extraRules?: ValidationRule[]     // sub-project rules
 }): (config: VeoConfig) => ValidationResult
 ```
+
+Each rule invocation is **wrapped in try/catch** by `createValidator()`. If a rule function throws (e.g., a sub-project ships a buggy custom rule), the exception is caught and converted to `{ valid: false, errors: ['Rule <name> threw: <message>'], suggestions: ['Report this to the rule\'s owning sub-project'] }`. This preserves `validateConfig()`'s never-throws contract even when extension rules misbehave.
 
 Each skill builds its own validator instance from `FOUNDATION_RULES` plus its own rules:
 
@@ -728,9 +732,10 @@ Run on every PR via the new CI workflow; mock or pure functions only.
 
 - `validation.test.ts` — every rule in §3 with valid + invalid input
 - `pricing.test.ts` — full matrix model × resolution × duration × audio × sampleCount
-- `audio-default.test.ts` — use-case → audio default table from §2
+- `audio-default.test.ts` — `AUDIO_DEFAULTS` constant matches §2 spec table (use-case → boolean)
 - `auto-fix.test.ts` — every auto-correction produces expected message + corrected config
-- `model-routing.test.ts` — given use case + speed intent, suggested model is the documented one
+- `model-routing.test.ts` — `MODEL_SUGGESTIONS` constant matches the spec table (use-case → {quality, fast, lite?} model IDs)
+- `image-helpers.test.ts` — MIME sniff (jpg/png/webp), base64 round-trip for `{path}` and `{buffer}` `ImageInput`, `gs://` URI format validation (valid + malformed: empty bucket, missing path, wrong scheme), `encodeImage()` returns the right `VertexImage` discriminated variant for each input. **Synchronous-only**: tests confirm `validateImage` does NOT make GCS API calls (existence checks deferred to actual upload/generation).
 
 ### Manual integration tests (paid, bounded)
 
