@@ -394,7 +394,9 @@ Phase 1 UNDERSTAND already collects `USE CASE`. Foundation derives audio default
 | `storytelling` (used for multi-shot narrative) | on | Dialogue + sync are the point |
 | **Not specified** | **on** | Matches Veo 3.1 API native default; user disables with `--no-audio` |
 
-Explicit `--audio` / `--no-audio` always wins. The Phase 4 PRESENT output shows the resolved audio state with reason ("on (derived from use case=social)").
+Explicit `--audio` / `--no-audio` always wins.
+
+**Provenance of the audio reason string**: when the user runs `/veo` interactively, the SKILL.md workflow (Phase 1 UNDERSTAND) collects the use case in conversation with Claude. Phase 4 PRESENT then displays the resolved audio state with a reason like "on (derived from use case=social)" — that string is composed by Claude using the conversation context, **not** read from `VeoConfig` or `validateConfig()`'s output. `VeoConfig` itself has no `useCase` field; the library only sees the resolved `generateAudio` boolean. Programmatic callers of `generateVideo()` (outside the SKILL.md flow) bypass the reason-string entirely and just pass `generateAudio` directly.
 
 #### Audio prompting
 
@@ -528,7 +530,7 @@ Applied with explicit user notification in Phase 4 PRESENT:
 |---|---|---|
 | `resolution=1080p/4k` + `durationSeconds === undefined` (user didn't pass `--duration` flag) | Set `duration=8` | "Bumped duration to 8s to enable 1080p/4K" |
 | Region=EU + `personGeneration=allow_all` | Force `allow_adult` | "Region restriction: personGeneration set to allow_adult" |
-| `model=veo-2.*` + `generateAudio === undefined` + (use case implies audio) | Set `generateAudio=false` | "Veo 2 doesn't support audio, disabled" |
+| `model=veo-2.*` + `generateAudio === undefined` | Set `generateAudio=false` | "Veo 2 doesn't support audio, disabled" |
 | `model=veo-2.*` + `generateAudio === true` (user explicitly passed `--audio`) | **No auto-fix — hard error** (rule #3) | "Veo 2 does not support audio. Pass `--no-audio` or switch to a Veo 3 model." |
 
 Auto-fixes apply only when the field is `undefined` (user didn't pass the flag — see option provenance in Data flow §). If the user explicitly set a value that conflicts (e.g., `--duration 6 --resolution 1080p`), validation hard-rejects with an error suggesting the user pick one.
