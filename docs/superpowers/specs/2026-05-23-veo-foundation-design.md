@@ -105,7 +105,9 @@ skills/
 
 The `_shared/` directory is excluded from skill discovery because it contains **no `SKILL.md`** — the Claude Code skill loader scans for `SKILL.md` files, not directory naming. The underscore prefix is a defensive convention (makes the intent visually obvious and avoids ambiguity with future loader rules), but the operative exclusion mechanism is the absence of `SKILL.md`. *To verify before implementation: confirm the current loader behavior in Claude Code; if loader rules ever change to scan by directory name, revisit.*
 
-Consuming skills reference `_shared/` via **relative imports** (e.g., `import { generateVideo } from '../../_shared/veo-core/generate'`). The original draft proposed a tsconfig path alias `@veo-core/*`, but the repository has no root `tsconfig.json` and the scripts run via `npx ts-node` without `--project`, so path aliases wouldn't resolve reliably. Relative imports are chosen for Foundation. If later sub-projects need cleaner imports, the team can introduce a root `tsconfig.json` + `TS_NODE_PROJECT` env var as a follow-up.
+Consuming skills reference `_shared/` via the **`@veo-core/*` path alias**, configured in a root `tsconfig.json` added as part of Foundation's infrastructure setup (alongside the root `package.json` and CI workflow — see migration plan step 1). The alias resolves under `ts-node` via the `TS_NODE_PROJECT` env var (exported by each skill script that uses it) and under `vitest` via `vitest.config.ts` referencing the same `tsconfig.json`. Example: `import { generateVideo } from '@veo-core/generate'`.
+
+Rationale for choosing aliases over relative imports: we are already adding root infrastructure (`package.json`, `vitest`, CI workflow) for the test runner. The marginal cost of also adding a root `tsconfig.json` is small, and the four downstream sub-projects will each import from `_shared/` — relative paths like `../../_shared/veo-core/pricing` repeated across all of them are brittle and cluttered.
 
 ### Module boundaries
 
@@ -114,7 +116,7 @@ Consuming skills reference `_shared/` via **relative imports** (e.g., `import { 
 | `auth.ts` | `getAccessToken(): string` | gcloud CLI invocation, error normalization |
 | `api.ts` | `submitGeneration(config, token): Promise<operationName>`, `pollOperation(opName, token): Promise<status>`, `downloadFile(url, path, token): Promise<void>` | URL building, HTTPS request handling, redirect following, **explicit HTTP status validation** (non-2xx/3xx → throw with status + body), partial-file cleanup on error |
 | `generate.ts` | `generateVideo(config: VeoConfig, outputPath?: string): Promise<GenerationResult>` | orchestrates auth → validate → submit → poll → (download \| skip if `storageUri` set). `outputPath` is required only when `storageUri` is unset. |
-| `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` | rule registry, auto-fix logic |
+| `validation.ts` | `validateConfig(config: VeoConfig): ValidationResult` — **return-only contract: never throws**. Caller inspects `result.valid` and decides action. | rule registry, auto-fix logic |
 | `pricing.ts` | `estimateCost(config: VeoConfig): { usd: number; breakdown: string }` | lookup table, last-updated marker comment |
 | `image-helpers.ts` | `validateImage(input: ImageInput)`, `encodeImageBase64(path)`, `uploadImageToGcs(path, gcsUri)` | MIME sniffing, file I/O, GCS API |
 | `types.ts` | exports type definitions only | — |
@@ -124,9 +126,11 @@ Consuming skills reference `_shared/` via **relative imports** (e.g., `import { 
 
 ```
 CLI (veo-generate.ts)
-  └─> parseArgs → VeoConfig
+  └─> parseArgs → VeoConfig (fields left `undefined` when user did NOT pass the flag)
         └─> generateVideo(config, outputPath?)
-              ├─> validateConfig(config) → may throw or auto-fix
+              ├─> validateConfig(config) → ValidationResult (never throws)
+              │     ├─> if !result.valid: generateVideo throws with errors + suggestions
+              │     └─> if result.valid: continue with result.autoFixed config (defaults applied + auto-corrections)
               ├─> getAccessToken()
               ├─> submitGeneration(config, token) → operationName
               ├─> pollOperation(operationName, token) → status
@@ -137,6 +141,8 @@ CLI (veo-generate.ts)
               │       └─> validate HTTP status; throw on non-2xx/3xx
         └─> GenerationResult (videoPath set when downloaded; gcsUri set when storageUri used)
 ```
+
+**Option provenance**: the CLI parser leaves a field `undefined` in `VeoConfig` when the user did NOT pass the corresponding flag. Defaults are applied inside `validateConfig()` (not in the parser). This lets validation distinguish "user explicitly set duration=6" (treat as user intent, hard-error if it conflicts with 1080p) from "duration not set, defaulting to 8" (apply auto-fix silently). The `result.autoFixed` config carries the final resolved values.
 
 When `storageUri` is set, `outputPath` is ignored and `GenerationResult.gcsUri` carries the final location; `videoPath` is `undefined`. When `storageUri` is unset, the inverse holds. The CLI errors out if neither is provided.
 
@@ -254,6 +260,39 @@ New file `skills/veo/references/audio-lexicon.md` contains:
 - Ambient patterns per mood (industrial, organic, cinematic)
 - Known limit: voice does not extend if absent in last 1s (relevant to future `/veo-extend`)
 
+#### API request construction in `submitGeneration`
+
+`submitGeneration` builds the Vertex AI `predictLongRunning` request body **dynamically** from the resolved `VeoConfig`. This ensures (a) all Foundation cross-cutting parameters are passed when set, and (b) the same function will support future input modalities (`image`, `lastFrame`, `referenceImages`, `videoExtensionInput`) without rewriting — sub-projects extend it via field presence in `VeoConfig`.
+
+Pseudocode shape (illustrative — implementation may differ):
+
+```typescript
+function buildRequestBody(c: VeoConfig) {
+  const instance: Record<string, unknown> = { prompt: c.prompt }
+  if (c.image)               instance.image = encodeImage(c.image)
+  if (c.lastFrame)           instance.lastFrame = encodeImage(c.lastFrame)
+  if (c.referenceImages)     instance.referenceImages = c.referenceImages.map(encodeImage)
+  if (c.videoExtensionInput) instance.video = { uri: c.videoExtensionInput }
+
+  const parameters: Record<string, unknown> = {
+    aspectRatio:       c.aspectRatio,
+    durationSeconds:   c.durationSeconds,
+    resolution:        c.resolution,
+    generateAudio:     c.generateAudio,
+    sampleCount:       c.sampleCount,
+  }
+  if (c.seed !== undefined)             parameters.seed = c.seed
+  if (c.negativePrompt)                 parameters.negativePrompt = c.negativePrompt
+  if (c.enhancePrompt !== undefined)    parameters.enhancePrompt = c.enhancePrompt
+  if (c.storageUri)                     parameters.storageUri = c.storageUri
+  if (c.personGeneration)               parameters.personGeneration = c.personGeneration
+
+  return { instances: [instance], parameters }
+}
+```
+
+Foundation ships `buildRequestBody` with the forward-declared image/extension branches **active** (they pass through to the API). Without the corresponding sub-project, the API will reject the call with its own error — Foundation does not gate it client-side beyond the validation rules above. This is intentional: it means a power user with custom code can already exercise image-to-video against Foundation's library before `/veo-animate` ships, just without the SKILL.md workflow guidance.
+
 ### 3. Cross-parameter validation rules
 
 `validation.ts` centralizes API constraint validation, separate from prompt-quality rules (which remain in `validation/prompt-checklist.md`).
@@ -262,13 +301,14 @@ Foundation only validates parameters that Foundation introduces. Rules covering 
 
 | # | Rule | Error if violated | Owned by |
 |---|---|---|---|
-| 1 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
-| 2 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
-| 3 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
-| 4 | `prompt.tokens > 1024` (approx: chars / 3.5 for Latin-script; see note below) | **Warning** when estimated tokens > 900 (soft); **Reject** only when estimated > 1024 (hard ceiling) — see token counting note | Foundation |
-| 5 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #2 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
-| 6 | `sampleCount ∈ [1, model-max]` (see Open Question #4) | "sampleCount out of range for selected model" | Foundation |
-| 7 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
+| 1 | `durationSeconds ∈ {4, 6, 8}` for all standard models | "durationSeconds must be 4, 6, or 8" | Foundation |
+| 2 | `resolution ∈ {1080p, 4k}` ⇒ `durationSeconds == 8` | "1080p/4K require duration=8" | Foundation |
+| 3 | `model ∈ veo-2.*` ⇒ `generateAudio == false` | "Veo 2 doesn't support audio" | Foundation |
+| 4 | `model ∈ veo-2.*` ⇒ `resolution == 720p` | "Veo 2 max resolution is 720p" | Foundation |
+| 5 | `prompt.tokens > 1024` (approx: chars / 3.5 for Latin-script; see note below) | **Warning** when estimated tokens > 900 (soft); **Reject** only when estimated > 1024 (hard ceiling) — see token counting note | Foundation |
+| 6 | `personGeneration == allow_all` in EU/UK/CH/MENA region (see Open Question #2 for detection mechanism) | Auto-correct + warning: "Region restriction: falling back to allow_adult" | Foundation |
+| 7 | `sampleCount ∈ [1, model-max]` (see Open Question #4) | "sampleCount out of range for selected model" | Foundation |
+| 8 | `aspectRatio ∈ {16:9, 9:16}` only | "Invalid aspect ratio" | Foundation |
 | F1 | `image` present ⇒ `durationSeconds == 8` (image-to-video) | — | `/veo-animate` |
 | F2 | `lastFrame` present ⇒ `durationSeconds == 8` AND `image` present | — | `/veo-interpolate` |
 | F3 | Video extension input ⇒ `resolution == 720p` | — | `/veo-extend` |
@@ -283,26 +323,38 @@ Applied with explicit user notification in Phase 4 PRESENT:
 
 | Situation | Auto-fix | Message |
 |---|---|---|
-| `resolution=1080p/4k` + `duration<8` (user didn't explicitly set duration) | Force `duration=8` | "Bumped duration to 8s to enable 1080p/4K" |
+| `resolution=1080p/4k` + `durationSeconds === undefined` (user didn't pass `--duration` flag) | Set `duration=8` | "Bumped duration to 8s to enable 1080p/4K" |
 | Region=EU + `personGeneration=allow_all` | Force `allow_adult` | "Region restriction: personGeneration set to allow_adult" |
-| `model=veo-2.*` + `audio=on` | Force `audio=off` | "Veo 2 doesn't support audio, disabled" |
+| `model=veo-2.*` + `generateAudio === undefined` + (use case implies audio) | Set `generateAudio=false` | "Veo 2 doesn't support audio, disabled" |
 
-Auto-fixes apply only when the corrected value is unambiguous. Ambiguous combinations (e.g., user explicitly set duration=6 AND resolution=1080p) fail with error instead.
+Auto-fixes apply only when the field is `undefined` (user didn't pass the flag — see option provenance in Data flow §). If the user explicitly set a value that conflicts (e.g., `--duration 6 --resolution 1080p`), validation hard-rejects with an error suggesting the user pick one.
 
 #### `validateConfig()` signature
 
 ```typescript
 type ValidationResult =
-  | { valid: true; warnings: string[]; autoFixed?: VeoConfig }
-  | { valid: false; errors: string[]; suggestions: string[] }
+  | {
+      valid: true
+      warnings: string[]           // soft issues to surface to user
+      autoFixed: VeoConfig         // input with defaults applied + auto-corrections; CALLERS USE THIS, not the original input
+      autoFixMessages: string[]    // human-readable description of each auto-correction
+    }
+  | {
+      valid: false
+      errors: string[]             // hard violations
+      suggestions: string[]        // remedial hints for the user
+    }
 
 function validateConfig(config: VeoConfig): ValidationResult
 ```
 
-Called from three locations:
-- CLI: exits with code 1 on `valid: false`, prints errors + suggestions
-- SKILL.md Phase 3 VALIDATE: surfaces warnings to user before Phase 4
-- Programmatic: callers of `generateVideo()` get validation before API call
+**Contract**: `validateConfig()` **never throws**. It returns a discriminated union; callers inspect `result.valid` and decide:
+
+- CLI: on `valid: false`, prints errors + suggestions and exits with code 1. On `valid: true`, prints warnings + autoFixMessages, then uses `result.autoFixed` for the API call.
+- SKILL.md Phase 3 VALIDATE: surfaces warnings + autoFixMessages to user before Phase 4 PRESENT.
+- Programmatic callers of `generateVideo()`: `generateVideo` internally calls `validateConfig`, throws an `Error` with the joined errors when invalid, otherwise proceeds with the auto-fixed config.
+
+Throwing happens only in `generateVideo()`, never in `validateConfig()`. This separation lets test code call `validateConfig()` and inspect results without exception handling.
 
 ### 4. Workflow updates (6 phases)
 
@@ -476,7 +528,7 @@ The split is a contingency, not the default plan. Default is single PR. The impl
 
 ## Migration plan
 
-1. **Test infrastructure**: add root `package.json` with `vitest`, `typescript`, `@types/node` devDeps; add `.github/workflows/test.yml` running tests on PR. Verify a trivial test passes in CI before proceeding.
+1. **Root infrastructure setup**: add root `package.json` with `vitest`, `typescript`, `@types/node` devDeps; add root `tsconfig.json` declaring the `@veo-core/*` path alias mapping to `skills/_shared/veo-core/*`; add `vitest.config.ts` referencing the same paths so tests resolve the alias; add `.github/workflows/test.yml` running `npm ci && npm test` on PRs to `main`. Each skill script that uses the alias exports `TS_NODE_PROJECT=./tsconfig.json` before invoking `ts-node` (documented in script comments). Verify a trivial test resolves `@veo-core/*` and passes in CI before proceeding.
 2. Create `skills/_shared/veo-core/` with extracted modules (`auth.ts`, `api.ts`, `generate.ts`, `types.ts`, `constants.ts`); no behavioral change yet.
 3. Add `image-helpers.ts` and `ImageInput` type — exported but not yet consumed by Foundation.
 4. Refactor `skills/veo/scripts/veo-generate.ts` to import from `_shared`; verify regression via existing examples.
