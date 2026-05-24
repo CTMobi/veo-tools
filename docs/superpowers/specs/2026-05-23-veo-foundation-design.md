@@ -123,6 +123,15 @@ The bootstrap file solves both problems by registering `tsconfig-paths` programm
 
 ```typescript
 // skills/_shared/veo-core/bootstrap.ts
+//
+// MODULE SYSTEM: Foundation targets CommonJS (matching ts-node's default).
+// `__dirname` is used directly. If the plugin migrates to ESM in the future,
+// replace `__dirname` with:
+//   import { fileURLToPath } from 'url'
+//   const __filename = fileURLToPath(import.meta.url)
+//   const __dirname = path.dirname(__filename)
+// and update tsconfig.json `module` to `NodeNext` or similar.
+
 import * as path from 'path'
 import * as fs from 'fs'
 import { register } from 'tsconfig-paths'
@@ -280,7 +289,11 @@ export function resolveDefaultModel(): string {
       return id
     }
   }
-  throw new Error('No supported Veo model available in constants.AVAILABLE_MODELS')
+  throw new Error(
+    `None of the models in DEFAULT_MODEL_CHAIN (${DEFAULT_MODEL_CHAIN.join(', ')}) ` +
+    `are present in AVAILABLE_MODELS (${[...AVAILABLE_MODELS].join(', ')}). ` +
+    `Update constants.ts via the maintenance protocol (§6).`
+  )
 }
 
 // Test-only helper: reset the cache so vi.mock-injected constants apply.
@@ -712,7 +725,21 @@ These were Open Questions in earlier revisions of the spec and have been resolve
    | Hebrew (`֐–׿`) | 2.0 | Conservative |
    | Devanagari (`ऀ–ॿ`) | 1.8 | Conservative for Hindi/Sanskrit |
 
-   Detection (unambiguous single rule): scan the prompt and for each script range, count the chars in it. **Among scripts whose presence exceeds 5% of total chars, pick the one with the smallest ratio (most restrictive, i.e., produces the highest token estimate).** This always returns a definitive answer regardless of distribution: a prompt with 95% Latin and 5% CJK uses the CJK multiplier (conservative); a 100% Latin prompt uses Latin; a balanced 40/35/25 distribution uses the smallest-ratio script present. The earlier wording mixed "dominant >30%" with "most restrictive" — those two rules conflicted for prompts with no >30% script; the single-rule formulation above resolves the ambiguity. Mitigation tiers: (a) rule #5 acts as a **soft warning** at >900 estimated tokens — **never a hard reject** (see rationale below); (b) when a non-Latin multiplier is used, the warning notes "estimate approximate for non-Latin content"; (c) Phase 5 API-side token errors are surfaced verbatim and tagged for the maintainer to revisit the ratios.
+   Detection (weighted-average, deterministic): scan the prompt, count chars per script range, and compute the estimated tokens as the **sum of per-script contributions**:
+
+   ```
+   estimated_tokens = Σ (chars_in_script_s / ratio_for_script_s)
+   ```
+
+   Example — a 1000-char prompt that is 90% Latin + 10% CJK:
+
+   ```
+   = 900 / 3.5  +  100 / 0.5
+   = 257.1      +  200
+   ≈ 457 tokens
+   ```
+
+   The previous "single most-restrictive multiplier" rule would have applied 0.5 to all 1000 chars → 2000 tokens (4× over-count). The weighted formulation matches per-script reality and avoids both spurious warnings on mostly-Latin prompts with token of CJK, and under-counts on the opposite case. Detection of script per char uses Unicode range membership (Latin default, CJK/Cyrillic/Arabic/Hebrew/Devanagari per the table above). Chars outside the listed ranges (e.g., symbols, punctuation) count as Latin. Mitigation tiers: (a) rule #5 acts as a **soft warning** at >900 estimated tokens — **never a hard reject** (see rationale below); (b) when a non-Latin multiplier is used, the warning notes "estimate approximate for non-Latin content"; (c) Phase 5 API-side token errors are surfaced verbatim and tagged for the maintainer to revisit the ratios.
 
    **No `countTokens` pre-flight check** — verified against Vertex AI multimodal docs, Vertex AI REST reference, Gemini API tokens doc, and the Veo 3.1 model page: the `countTokens` endpoint supports only Gemini models (Gemini 3.1 Flash-Lite/Pro/Image, 3 Flash/Pro Image, 2.5 Pro/Flash variants). Veo is **not** in the supported list, and no per-model token counter exists. Any local heuristic would therefore produce false positives. Foundation accepts this and lets the Veo backend enforce the limit; the API's error message surfaces immediately (validation backend, not after the 2-4 min generation), so the UX cost of a missed warning is minimal.
 3. **`sampleCount` upper bound per model**: official docs are contradictory — the main Veo page states "Veo 2 supports 2; Veo 3+ generates 1", while the `veo-3.1-generate-preview` model page states "Max output videos: 4 per request". The current script accepts 1-4 universally. Foundation defers the authoritative answer to empirical verification: probe each model with `sampleCount=2,3,4` and encode the discovered limits as a per-model constant in `constants.ts`.
