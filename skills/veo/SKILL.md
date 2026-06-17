@@ -209,6 +209,10 @@ If the user is not satisfied with results, guide targeted improvements:
 | Doesn't loop well | Motion too complex for loop | Use 4s duration, lock camera, reduce motion |
 | Generic output | Lacking material specificity | Add texture/material detail |
 | Wrong color feel | Color direction unclear | Add explicit palette direction |
+| Poor audio sync | Audio Layer too vague | More specific Audio Layer; short dialogue (~5 words) |
+| Cost too high | Quality model / high resolution | Switch to Fast or Lite; try 720p |
+| Output too generic | Server rewrite diluting prompt | Disable `enhancePrompt` (`--no-enhance-prompt`); tighten the prompt |
+| Region blocks persons | `allow_all` rejected in region | Set `--person-generation allow_adult` explicitly |
 
 **Iteration Workflow:**
 1. Identify specific issue from user feedback
