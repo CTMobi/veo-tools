@@ -20,9 +20,11 @@ function isTransientPollError(e: unknown): boolean {
   if (/high load|try again|temporarily|unavailable|timed out|timeout|econnreset|etimedout|socket hang up/.test(msg)) {
     return true
   }
-  // Status codes are anchored on non-digit boundaries so an unrelated "503"/"429"
-  // embedded in a permanent error's body text isn't misread as transient.
-  return /(^|[^0-9])(503|429)([^0-9]|$)/.test(msg)
+  // Status codes are matched on word boundaries so a standalone "HTTP 503" / "429"
+  // is transient, but "503" embedded inside an alphanumeric token (e.g. a resource
+  // id like "abc503def") is NOT — \b sits only between a word char and a non-word
+  // char, and digits+letters are both word chars, so it never fires mid-token.
+  return /\b(503|429)\b/.test(msg)
 }
 
 function getProjectAndLocation(): { projectId: string; location: string } {
