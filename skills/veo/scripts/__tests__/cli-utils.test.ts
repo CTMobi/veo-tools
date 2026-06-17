@@ -21,6 +21,18 @@ describe('parseArgs', () => {
     exit.mockRestore()
     err.mockRestore()
   })
+
+  it('exits 2 when a value-taking flag is followed by another flag (--prompt --dry-run)', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const errs: string[] = []
+    const err = vi.spyOn(console, 'error').mockImplementation((s: unknown) => { errs.push(String(s)) })
+    expect(() => parseArgs(['--prompt', '--dry-run'])).toThrow(/exit:2/)
+    expect(errs.some((s) => /--prompt requires a value/i.test(s))).toBe(true)
+    exit.mockRestore()
+    err.mockRestore()
+  })
 })
 
 describe('buildConfig', () => {

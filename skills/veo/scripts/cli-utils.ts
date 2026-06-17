@@ -43,12 +43,15 @@ export function parseArgs(argv: string[]): Record<string, string | boolean> {
       process.exit(2)
     }
     if (def.takesValue) {
-      const v = argv[++i]
-      if (v === undefined) {
+      // Peek the next token instead of blindly consuming it: a flag-shaped token
+      // (or end of argv) means the value is missing, e.g. `--prompt --dry-run`.
+      const next = argv[i + 1]
+      if (next === undefined || next.startsWith('--')) {
         console.error(`Flag ${a} requires a value`)
         process.exit(2)
       }
-      out[def.name] = v
+      i += 1
+      out[def.name] = next
     } else {
       out[def.name] = true
     }
