@@ -38,6 +38,9 @@ export function validateImage(img: ImageInput): void {
     if (!fs.existsSync(img.path)) {
       throw new Error(`Image file not found: ${img.path}`)
     }
+    if (!fs.statSync(img.path).isFile()) {
+      throw new Error(`Image path is not a regular file: ${img.path}`)
+    }
     if (!img.mimeType) sniffMime(img.path) // throws on unknown ext
     return
   }

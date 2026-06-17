@@ -61,6 +61,9 @@ describe('validateImage (synchronous; no GCS API calls)', () => {
   it('accepts well-formed gs://', () => {
     expect(() => validateImage({ gcsUri: 'gs://bucket/path/object.jpg' })).not.toThrow()
   })
+  it('rejects a directory path even with an explicit mimeType', () => {
+    expect(() => validateImage({ path: tmpDir, mimeType: 'image/png' })).toThrow(/file|directory/i)
+  })
 })
 
 describe('encodeImage', () => {
