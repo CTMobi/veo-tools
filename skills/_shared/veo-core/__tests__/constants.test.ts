@@ -123,6 +123,12 @@ describe('detectRegion', () => {
   it('unknown region => undefined', () => {
     expect(detectRegion('africa-mars1')).toBeUndefined()
   })
+  it('invalid envRegion (typo) => undefined, not a mis-typed valid region', () => {
+    expect(detectRegion(undefined, 'USA')).toBeUndefined()
+    expect(detectRegion(undefined, 'europe')).toBeUndefined()
+    expect(detectRegion(undefined, 'MENA')).toBeUndefined()
+    expect(detectRegion('us-central1', 'not-a-region')).toBeUndefined()
+  })
 })
 
 describe('REGIONS ordering invariant', () => {

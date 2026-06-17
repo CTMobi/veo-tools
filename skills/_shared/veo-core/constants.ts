@@ -70,9 +70,15 @@ export const MODEL_SUGGESTIONS: Readonly<
 // Fallback for unknown use case (callers should compute lazily, not at module load):
 //   MODEL_SUGGESTIONS[useCase] ?? { quality: resolveDefaultModel(), fast: 'veo-3.1-fast-generate-001' }
 
+export type Region = 'us' | 'eu' | 'uk' | 'ch' | 'mena' | 'other'
+
+const REGION_VALUES: ReadonlySet<string> = new Set<Region>([
+  'us', 'eu', 'uk', 'ch', 'mena', 'other',
+])
+
 type RegionEntry =
-  | { type: 'exact';  location: string; region: 'us' | 'eu' | 'uk' | 'ch' | 'mena' | 'other' }
-  | { type: 'prefix'; prefix: string;   region: 'us' | 'eu' | 'uk' | 'ch' | 'mena' | 'other' }
+  | { type: 'exact';  location: string; region: Region }
+  | { type: 'prefix'; prefix: string;   region: Region }
 
 export const REGIONS: ReadonlyArray<RegionEntry> = [
   // Exact matches first (must beat europe- prefix below)
@@ -116,8 +122,8 @@ export function _resetDefaultModelCacheForTests(): void {
 export function detectRegion(
   gcpLocation?: string,
   envRegion?: string
-): 'us' | 'eu' | 'uk' | 'ch' | 'mena' | 'other' | undefined {
-  if (envRegion) return envRegion as 'us' | 'eu' | 'uk' | 'ch' | 'mena' | 'other'
+): Region | undefined {
+  if (envRegion) return REGION_VALUES.has(envRegion) ? (envRegion as Region) : undefined
   if (!gcpLocation) return undefined
   // Exact matches take precedence (REGIONS is ordered: exact entries first)
   for (const entry of REGIONS) {
