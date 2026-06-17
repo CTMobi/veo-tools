@@ -65,6 +65,20 @@ export function buildRequestBody(c: VeoConfig): unknown {
   return { instances: [instances], parameters }
 }
 
+// parseJsonResponse — JSON.parse a 2xx body, re-throwing a raw SyntaxError as an
+// error that names the source (which call) and includes the capped raw body, so a
+// 200 with a non-JSON payload (HTML error page, truncated stream) is diagnosable
+// instead of surfacing an opaque "Unexpected token" with no HTTP context.
+function parseJsonResponse(source: string, body: string): unknown {
+  try {
+    return JSON.parse(body)
+  } catch (e) {
+    throw new Error(
+      `${source}: could not parse response body as JSON (${(e as Error).message}) — ${body.slice(0, ERROR_BODY_CAP)}`
+    )
+  }
+}
+
 function makeRequest(url: string, method: string, token: string, body?: unknown): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
@@ -108,7 +122,7 @@ export async function submitGeneration(
   if (status < 200 || status >= 300) {
     throw new Error(`submitGeneration: HTTP ${status} — ${body.slice(0, ERROR_BODY_CAP)}`)
   }
-  const parsed = JSON.parse(body) as { name?: string }
+  const parsed = parseJsonResponse('submitGeneration', body) as { name?: string }
   if (!parsed.name) throw new Error(`submitGeneration: missing operation name in response: ${body.slice(0, 256)}`)
   return parsed.name
 }
@@ -136,7 +150,7 @@ export async function pollOperation(
   // delivery (no storageUri) returns the video inline as videos[0].bytesBase64Encoded
   // + mimeType — there is NO uri/gcsUri in that case. raiMediaFilteredCount reports
   // how many candidates the Responsible-AI filter suppressed.
-  const parsed = JSON.parse(body) as {
+  const parsed = parseJsonResponse('pollOperation', body) as {
     done?: boolean
     response?: {
       videos?: Array<{ gcsUri?: string; bytesBase64Encoded?: string; uri?: string; mimeType?: string }>

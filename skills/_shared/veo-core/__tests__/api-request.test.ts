@@ -62,6 +62,15 @@ describe('submitGeneration', () => {
     nextResponse = JSON.stringify({ notName: 'x' })
     await expect(submitGeneration(cfg(), 'tok', opts())).rejects.toThrow(/operation name/i)
   })
+  it('throws a parse/response error (not a raw SyntaxError) on a 200 with non-JSON body', async () => {
+    nextStatus = 200
+    nextResponse = '<html>oops</html>'
+    let err: Error | undefined
+    try { await submitGeneration(cfg(), 'tok', opts()) } catch (e) { err = e as Error }
+    expect(err).toBeDefined()
+    expect(err!.message).toMatch(/parse|invalid.*response|non-JSON/i)
+    expect(err!.message).toContain('<html>oops</html>') // capped raw body included for diagnosis
+  })
 })
 
 describe('pollOperation', () => {
@@ -117,6 +126,15 @@ describe('pollOperation', () => {
   it('propagates error.message from the operation', async () => {
     nextResponse = JSON.stringify({ done: true, error: { message: 'quota exceeded' } })
     await expect(pollOperation('op/1', 'tok', popts())).rejects.toThrow(/quota exceeded/)
+  })
+  it('throws a parse/response error (not a raw SyntaxError) on a 200 with non-JSON body', async () => {
+    nextStatus = 200
+    nextResponse = '<html>oops</html>'
+    let err: Error | undefined
+    try { await pollOperation('op/1', 'tok', popts()) } catch (e) { err = e as Error }
+    expect(err).toBeDefined()
+    expect(err!.message).toMatch(/parse|invalid.*response|non-JSON/i)
+    expect(err!.message).toContain('<html>oops</html>')
   })
 })
 
