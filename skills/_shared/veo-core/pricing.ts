@@ -12,7 +12,9 @@ import { resolveDefaultModel } from '@veo-core/constants'
 
 // Per-second base rates (USD/sec) at 720p without audio, sampleCount=1.
 // Resolution multipliers applied below.
-// These are illustrative seed values pending oracle review on first paid probe (M13).
+// NOTE: the M13 paid probe (2026-06-17) verified model liveness and the response
+// shape, NOT the exact per-second prices. These remain ESTIMATES — confirm against
+// the official Vertex AI Veo pricing page before relying on the figures for billing.
 const BASE_USD_PER_SEC: Record<string, number> = {
   'veo-3.1-generate-001':      0.50,
   'veo-3.1-fast-generate-001': 0.35,

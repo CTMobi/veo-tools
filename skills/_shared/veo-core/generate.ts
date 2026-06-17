@@ -16,9 +16,13 @@ const POLL_MAX_TRANSIENT_RETRIES = 5
 // instead of spinning uselessly until the deadline.
 function isTransientPollError(e: unknown): boolean {
   const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
-  return /high load|try again|temporarily|unavailable|timed out|timeout|econnreset|etimedout|socket hang up|503|429/.test(
-    msg
-  )
+  // Phrase signals are specific enough to match as substrings.
+  if (/high load|try again|temporarily|unavailable|timed out|timeout|econnreset|etimedout|socket hang up/.test(msg)) {
+    return true
+  }
+  // Status codes are anchored on non-digit boundaries so an unrelated "503"/"429"
+  // embedded in a permanent error's body text isn't misread as transient.
+  return /(^|[^0-9])(503|429)([^0-9]|$)/.test(msg)
 }
 
 function getProjectAndLocation(): { projectId: string; location: string } {
@@ -27,7 +31,7 @@ function getProjectAndLocation(): { projectId: string; location: string } {
   // environments that set only the *_ID variant keep working.
   const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID
   const location  = process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1'
-  if (!projectId) throw new Error('GOOGLE_CLOUD_PROJECT env var is required')
+  if (!projectId) throw new Error('GOOGLE_CLOUD_PROJECT (or GOOGLE_CLOUD_PROJECT_ID) env var is required')
   return { projectId, location }
 }
 

@@ -256,6 +256,18 @@ describe('generateVideo', () => {
     expect(api.pollOperation).toHaveBeenCalledTimes(1)
   })
 
+  it('does not misclassify a permanent error whose text incidentally contains "503" as transient', async () => {
+    // Status codes are anchored on non-digit boundaries, so an unrelated "503" in a
+    // permanent error body (here an id) must NOT trigger the transient retry.
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('Permission denied for resource abc503def')
+    )
+    await expect(
+      generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+    ).rejects.toThrow(/permission denied/i)
+    expect(api.pollOperation).toHaveBeenCalledTimes(1)
+  })
+
   it('throws a Responsible-AI error when all candidates were filtered (no video)', async () => {
     ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       done: true,
