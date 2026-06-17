@@ -276,7 +276,10 @@ async function downloadFromHttps(
       const isHttps = currentUrl.protocol === 'https:'
       const lib = isHttps ? https : http
       const headers: Record<string, string> = {}
-      if (authorizationActive) headers.authorization = `Bearer ${token}`
+      // Defense-in-depth: only attach the bearer over HTTPS. Never send credentials
+      // over cleartext http:// — covers a directly-http initial URL (the HTTPS->HTTP
+      // redirect-rejection in decideRedirect handles the downgrade-hop case).
+      if (authorizationActive && isHttps) headers.authorization = `Bearer ${token}`
 
       const req = lib.request(
         {

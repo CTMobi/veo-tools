@@ -48,7 +48,11 @@ describe('downloadFile — cross-origin Authorization stripping (RFC 6454)', () 
     }
   })
 
-  it('keeps Authorization on a same-origin redirect (sanity: stripping is origin-scoped, not blanket)', async () => {
+  it('follows a same-origin redirect to completion (origin-scoped stripping is unit-tested via decideRedirect)', async () => {
+    // NB: over cleartext http the bearer is never attached (CR2 defense-in-depth),
+    // so we cannot observe origin-scoped *retention* here — that lives in the
+    // decideRedirect unit tests below (which exercise the https path purely). This
+    // case asserts the manual-redirect follow still produces the correct payload.
     let authSeen: string | undefined = 'UNSET'
     const server = http.createServer((req, res) => {
       if (req.url === '/start') {
@@ -66,7 +70,31 @@ describe('downloadFile — cross-origin Authorization stripping (RFC 6454)', () 
     try {
       const out = path.join(tmpDir, 'same.bin')
       await downloadFile(`http://127.0.0.1:${port}/start`, out, 'secret-bearer-token')
-      expect(authSeen).toBe('Bearer secret-bearer-token')
+      expect(fs.readFileSync(out).equals(PAYLOAD)).toBe(true)
+      // Cleartext http never carries the bearer (CR2).
+      expect(authSeen).toBeUndefined()
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  })
+})
+
+describe('downloadFile — never sends Authorization over cleartext http:// (CR2)', () => {
+  it('does NOT attach the bearer when the initial URL is plain http://', async () => {
+    let authSeen: string | undefined = 'UNSET'
+    const server = http.createServer((req, res) => {
+      authSeen = req.headers.authorization
+      res.writeHead(200, { 'content-type': 'application/octet-stream' })
+      res.end(PAYLOAD)
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    try {
+      const out = path.join(tmpDir, 'cleartext.bin')
+      await downloadFile(`http://127.0.0.1:${port}/video.mp4`, out, 'secret-bearer-token')
+      expect(fs.readFileSync(out).equals(PAYLOAD)).toBe(true)
+      // Credentials must never transit cleartext, even on the initial (non-redirect) hop.
+      expect(authSeen).toBeUndefined()
     } finally {
       await new Promise<void>((r) => server.close(() => r()))
     }
