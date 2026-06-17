@@ -165,6 +165,9 @@ export async function saveInlineVideo(base64: string, outputPath: string): Promi
   const buf = Buffer.from(base64, 'base64')
   const tmp = `${outputPath}.${crypto.randomBytes(8).toString('hex')}.tmp`
   try {
+    // Match downloadFromGcs/downloadFromHttps: ensure the parent dir exists before
+    // writing. Inline base64 is the DEFAULT delivery, so this is the common path.
+    await fs.promises.mkdir(path.dirname(outputPath), { recursive: true })
     await fs.promises.writeFile(tmp, buf)
     await fs.promises.rename(tmp, outputPath)
   } catch (e) {

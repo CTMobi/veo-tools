@@ -3,7 +3,7 @@ import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { downloadFile } from '@veo-core/api'
+import { downloadFile, saveInlineVideo } from '@veo-core/api'
 
 // We exercise the redirect / error-body-cap / atomic-write logic against a local
 // http server. HTTPS-specific paths (cross-origin Authorization stripping,
@@ -106,5 +106,34 @@ describe('downloadFile — URL scheme handling', () => {
     await expect(
       downloadFile('ftp://example.com/file', path.join(tmpDir, 'f.bin'), 'fake-token')
     ).rejects.toThrow(/scheme|protocol|http|gs:/i)
+  })
+})
+
+describe('saveInlineVideo — default inline base64 delivery', () => {
+  it('writes the DECODED bytes (not the base64 string) and leaves no stranded .tmp', async () => {
+    const out = path.join(tmpDir, 'inline-ok.mp4')
+    const base64 = 'AAECAwQF' // 6 bytes: 00 01 02 03 04 05
+    await saveInlineVideo(base64, out)
+    const onDisk = fs.readFileSync(out)
+    expect(onDisk.equals(Buffer.from(base64, 'base64'))).toBe(true)
+    const stranded = fs.readdirSync(tmpDir).filter((f) => f.startsWith('inline-ok.mp4') && f.endsWith('.tmp'))
+    expect(stranded.length).toBe(0)
+  })
+
+  it('creates the parent directory when it does not yet exist (matches downloadFile)', async () => {
+    const out = path.join(tmpDir, 'nested', 'deeper', 'inline.mp4')
+    await saveInlineVideo('AAECAwQF', out)
+    expect(fs.readFileSync(out).equals(Buffer.from('AAECAwQF', 'base64'))).toBe(true)
+  })
+
+  it('rejects and leaves no stranded .tmp when the target dir cannot be written', async () => {
+    // A path whose "directory" is actually a regular file -> mkdir/writeFile fails.
+    const fileNotDir = path.join(tmpDir, 'a-file')
+    fs.writeFileSync(fileNotDir, 'x')
+    const out = path.join(fileNotDir, 'inline.mp4') // parent is a file, not a dir
+    await expect(saveInlineVideo('AAECAwQF', out)).rejects.toThrow()
+    // No .tmp stranded next to the bogus path's parent (the real tmpDir).
+    const stranded = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.tmp'))
+    expect(stranded.length).toBe(0)
   })
 })
