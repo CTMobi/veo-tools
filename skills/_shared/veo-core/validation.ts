@@ -228,6 +228,34 @@ const ruleVeo3NoDisableEnhance: ValidationRule = (c) => {
   }
 }
 
+// #12 — seed range. Vertex accepts an integer in [0, 2^31-1] (signed-32-bit max,
+// inclusive). undefined => no constraint; anything non-integer or out of range errors.
+const ruleSeedRange: ValidationRule = (c) => {
+  if (c.seed === undefined) return { kind: 'ok' }
+  if (!Number.isInteger(c.seed) || c.seed < 0 || c.seed > 2147483647) {
+    return {
+      kind: 'error',
+      message: `seed must be an integer between 0 and 2147483647; got ${c.seed}`,
+    }
+  }
+  return { kind: 'ok' }
+}
+
+// #13 — personGeneration enum. Allowed: allow_all | allow_adult | disallow.
+// undefined => ok. An invalid value errors here; a valid allow_all still flows
+// through to rule #6's region auto-fix (rules don't short-circuit each other).
+const PERSON_GENERATION_VALUES = ['allow_all', 'allow_adult', 'disallow']
+const rulePersonGenerationEnum: ValidationRule = (c) => {
+  if (c.personGeneration === undefined) return { kind: 'ok' }
+  if (!PERSON_GENERATION_VALUES.includes(c.personGeneration)) {
+    return {
+      kind: 'error',
+      message: `Invalid personGeneration: ${c.personGeneration} (allowed: ${PERSON_GENERATION_VALUES.join(', ')})`,
+    }
+  }
+  return { kind: 'ok' }
+}
+
 export const FOUNDATION_RULES: ValidationRule[] = [
   ruleDurationsPerModel,              // #1
   ruleHighResRequiresDuration8,       // #2
@@ -240,6 +268,8 @@ export const FOUNDATION_RULES: ValidationRule[] = [
   ruleOutputXor,                      // #9
   ruleForwardDeclaredWarning,         // #10
   ruleVeo3NoDisableEnhance,           // #11
+  ruleSeedRange,                      // #12
+  rulePersonGenerationEnum,           // #13
 ]
 
 // ---------- factory ----------

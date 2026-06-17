@@ -188,6 +188,53 @@ describe('Rule #10 — forward-declared field warning', () => {
   })
 })
 
+describe('Rule #12 — seed range (integer 0..2^31-1)', () => {
+  it('seed=-1 => error', () => {
+    const r = validateConfig(ok({ seed: -1 }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/seed/i)
+  })
+  it('seed=2^31 (2147483648) => error (above inclusive max)', () => {
+    const r = validateConfig(ok({ seed: 2147483648 }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/seed/i)
+  })
+  it('seed=1.5 => error (must be integer)', () => {
+    const r = validateConfig(ok({ seed: 1.5 }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/seed/i)
+  })
+  it('seed=0 => valid', () => {
+    expect(validateConfig(ok({ seed: 0 })).valid).toBe(true)
+  })
+  it('seed=2147483647 (inclusive max) => valid', () => {
+    expect(validateConfig(ok({ seed: 2147483647 })).valid).toBe(true)
+  })
+  it('seed undefined => valid (no rule applies)', () => {
+    expect(validateConfig(ok()).valid).toBe(true)
+  })
+})
+
+describe('Rule #13 — personGeneration enum', () => {
+  it('personGeneration=nonsense => error', () => {
+    const r = validateConfig(ok({ personGeneration: 'nonsense' as unknown as 'allow_all' }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/personGeneration/i)
+  })
+  it('the three valid values => no enum error', () => {
+    for (const v of ['allow_all', 'allow_adult', 'disallow'] as const) {
+      // Use an unrestricted region so allow_all does not trigger the #6 region auto-fix path.
+      const r = createValidator({ baseRules: FOUNDATION_RULES })(ok({ personGeneration: v }), { region: 'us' })
+      expect(r.valid).toBe(true)
+    }
+  })
+  it('valid allow_all still gets region auto-fix in a restricted region (#13 does not block #6)', () => {
+    const r = createValidator({ baseRules: FOUNDATION_RULES })(ok({ personGeneration: 'allow_all' }), { region: 'eu' })
+    expect(r.valid).toBe(true)
+    if (r.valid) expect(r.autoFixed.personGeneration).toBe('allow_adult')
+  })
+})
+
 describe('validateConfig — internal ordering invariant', () => {
   it('step 1 resolves default model before any rule sees the config', () => {
     const seen: Array<string | undefined> = []
