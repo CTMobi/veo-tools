@@ -94,6 +94,11 @@ export const REGIONS: ReadonlyArray<RegionEntry> = [
   { type: 'prefix', prefix:   'southamerica-',    region: 'other' },
 ]
 
+// Regions where personGeneration=allow_all is not permitted; the validator
+// auto-fixes allow_all -> allow_adult for these. Single source of truth so the
+// rule does not hardcode the list.
+export const RESTRICTED_PERSON_REGIONS = ['eu', 'uk', 'ch', 'mena'] as const
+
 export const MAX_TOKENS = 1024
 export const TOKEN_WARNING_THRESHOLD = 900
 

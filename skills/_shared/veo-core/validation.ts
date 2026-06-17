@@ -11,6 +11,7 @@ import {
   MODEL_DURATIONS,
   MODEL_SAMPLE_MAX,
   TOKEN_WARNING_THRESHOLD,
+  RESTRICTED_PERSON_REGIONS,
   detectRegion,
   resolveDefaultModel,
 } from '@veo-core/constants'
@@ -98,7 +99,7 @@ const ruleTokenWarning: ValidationRule = (c) => {
 
 const rulePersonGenerationRegion: ValidationRule = (c, ctx) => {
   if (c.personGeneration !== 'allow_all') return { kind: 'ok' }
-  const restricted = ctx.region && ['eu', 'uk', 'ch', 'mena'].includes(ctx.region)
+  const restricted = ctx.region && (RESTRICTED_PERSON_REGIONS as readonly string[]).includes(ctx.region)
   if (!restricted) return { kind: 'ok' }
   return {
     kind: 'autoFix',
@@ -109,6 +110,13 @@ const rulePersonGenerationRegion: ValidationRule = (c, ctx) => {
 
 const ruleSampleCountPerModel: ValidationRule = (c) => {
   if (c.sampleCount === undefined) return { kind: 'ok' }
+  if (!Number.isInteger(c.sampleCount)) {
+    return {
+      kind: 'error',
+      message: `sampleCount must be an integer; got ${c.sampleCount}`,
+      suggestion: 'pass a whole number (e.g. 1, 2)',
+    }
+  }
   const max = MODEL_SAMPLE_MAX[c.model!]
   if (max === undefined) {
     return { kind: 'warning', message: `sampleCount not validated against unknown model ${c.model}` }
@@ -132,6 +140,14 @@ const ruleAspectRatioEnum: ValidationRule = (c) => {
 
 // Rule #9 — outputPath XOR storageUri. The single explicit undefined-guard exception.
 const ruleOutputXor: ValidationRule = (c) => {
+  // A field that is present but empty/whitespace-only is unusable as a destination.
+  // Surface that explicitly rather than letting it pass the presence check.
+  if (c.outputPath !== undefined && c.outputPath.trim() === '') {
+    return { kind: 'error', message: 'outputPath cannot be empty' }
+  }
+  if (c.storageUri !== undefined && c.storageUri.trim() === '') {
+    return { kind: 'error', message: 'storageUri cannot be empty' }
+  }
   const hasOut = c.outputPath !== undefined
   const hasGcs = c.storageUri !== undefined
   if (!hasOut && !hasGcs) {

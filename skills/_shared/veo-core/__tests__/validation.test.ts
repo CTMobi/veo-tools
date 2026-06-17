@@ -37,6 +37,16 @@ describe('Rule #9 — outputPath XOR storageUri', () => {
     const r = validateConfig({ prompt: 'x', storageUri: 'gs://b/o' })
     expect(r.valid).toBe(true)
   })
+  it("outputPath:'' (present-but-blank) => error", () => {
+    const r = validateConfig({ prompt: 'x', outputPath: '' })
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/outputPath cannot be empty/i)
+  })
+  it("storageUri:'   ' (whitespace-only) => error", () => {
+    const r = validateConfig({ prompt: 'x', storageUri: '   ' })
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/storageUri cannot be empty/i)
+  })
 })
 
 describe('Rule #1 — durations per model', () => {
@@ -113,6 +123,10 @@ describe('Rule #6 — personGeneration regional', () => {
       expect(r.autoFixMessages.join(' ')).toMatch(/region/i)
     }
   })
+  it('restricted-region list is sourced from the shared constant (not hardcoded in the rule)', async () => {
+    const { RESTRICTED_PERSON_REGIONS } = await import('@veo-core/constants')
+    expect([...RESTRICTED_PERSON_REGIONS]).toEqual(expect.arrayContaining(['eu', 'uk', 'ch', 'mena']))
+  })
 })
 
 describe('Rule #7 — sampleCount per model', () => {
@@ -123,6 +137,11 @@ describe('Rule #7 — sampleCount per model', () => {
   it('Veo 3.x + sampleCount=4 => valid', () => {
     const r = validateConfig(ok({ sampleCount: 4 }))
     expect(r.valid).toBe(true)
+  })
+  it('fractional sampleCount=1.5 => error (must be an integer)', () => {
+    const r = validateConfig(ok({ sampleCount: 1.5 }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/integer/i)
   })
 })
 
