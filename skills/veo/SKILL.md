@@ -178,10 +178,10 @@ If validation fails, present the errors from `validateConfig()`, suggest fixes, 
 
 Run `veo-generate` with the resolved flags. Then map the result to one of these outcomes:
 
-- **Safety filter** (`raiMediaFilteredCount > 0`): report `Safety filter triggered: <reason>` (the reason comes from the RAI response when `--include-rai-reason` was set) and suggest an edited prompt.
-- **Audio blocked, no charge**: report `Audio rejected, no charge applied, video saved without audio` — the video is usable; only the audio track was filtered.
-- **Quota exceeded**: report the quota error and suggest switching to a Fast variant (`--model veo-3.1-fast-generate-001`) to retry.
-- **Region restriction**: person-generation downgrades are pre-applied in Phase 4; if the user forced an explicit `--person-generation allow_all` in a restricted region, the API rejects it — report the failure with the clear region message and the `allow_adult` alternative.
+- **Safety filter**: the Vertex AI response carries `raiMediaFilteredCount > 0` and optionally a block reason in the RAI block. The current CLI does not yet decode these fields from the raw operation response — a filtered request throws a generic `pollOperation` error or hits "no download target in poll result". Until the CLI surfaces this explicitly, treat any generation error as a potential safety filter and suggest an edited prompt. The `--include-rai-reason` flag passes `includeRaiReason=true` to the API so the raw response will contain the reason; the CLI does not yet read it back.
+- **Audio blocked, no charge**: the Vertex AI response carries an audio-filtered status in the operation result. The current CLI does not yet decode this field. Until surfaced, a successful generation with audio enabled that returns a video without audio should be treated as an audio rejection — the video is usable; only the audio track was filtered.
+- **Quota exceeded**: the Vertex AI error message surfaces as a thrown error from `pollOperation`. Report the quota error and suggest switching to a Fast variant (`--model veo-3.1-fast-generate-001`) to retry.
+- **Region restriction**: person-generation downgrades are pre-applied in Phase 4; if the user forced an explicit `--person-generation allow_all` in a restricted region, the API rejects it — the error propagates as a `pollOperation` throw. Report the failure with the clear region message and the `allow_adult` alternative.
 - **Success**: report the saved video path (or the `gs://` URI when `--storage-uri` was used).
 
 Example invocation:
