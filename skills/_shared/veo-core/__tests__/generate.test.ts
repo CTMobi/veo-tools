@@ -181,6 +181,17 @@ describe('generateVideo', () => {
     )
   })
 
+  it('prefers GOOGLE_CLOUD_PROJECT over GOOGLE_CLOUD_PROJECT_ID when both are set (GEM-B precedence)', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'primary')
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT_ID', 'legacy')
+    await generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+    expect(api.submitGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ projectId: 'primary' })
+    )
+  })
+
   it('warns about silent data loss when sampleCount > 1 (CLAUDE-1)', async () => {
     const r = await generateVideo({
       prompt: 'a sunset',
