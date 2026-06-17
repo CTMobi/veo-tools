@@ -46,13 +46,16 @@ export function estimateCost(config: VeoConfig): { usd: number; breakdown: strin
   const resMult = RESOLUTION_MULTIPLIER[resolution] ?? 1
   const audioDelta = audio && !model.startsWith('veo-2') ? AUDIO_PER_SEC_DELTA : 0
 
-  const perVideo = (base + audioDelta) * resMult * duration
-  const usd = perVideo * samples
+  // Round per-video cost first, then multiply by sampleCount so that
+  // estimateCost({ sampleCount: N }).usd === N * estimateCost({ sampleCount: 1 }).usd
+  // for every valid input combination.
+  const perVideoRounded = Math.round((base + audioDelta) * resMult * duration * 100) / 100
+  const usd = perVideoRounded * samples
 
   const breakdown =
     `${model}, ${duration}s, ${resolution}` +
     (audio ? ', audio' : '') +
     (samples > 1 ? `, x${samples}` : '')
 
-  return { usd: Math.round(usd * 100) / 100, breakdown }
+  return { usd, breakdown }
 }

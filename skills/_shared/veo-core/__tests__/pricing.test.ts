@@ -8,10 +8,16 @@ const base: VeoConfig = {
 }
 
 describe('estimateCost — sampleCount strict multiplier', () => {
-  it('doubles cost when sampleCount=2', () => {
+  it('doubles cost when sampleCount=2 (720p/8s/no-audio)', () => {
     const one = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: 8, generateAudio: false, sampleCount: 1 })
     const two = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: 8, generateAudio: false, sampleCount: 2 })
-    expect(two.usd).toBeCloseTo(one.usd * 2, 5)
+    expect(two.usd).toBe(one.usd * 2)
+  })
+
+  it('doubles cost when sampleCount=2 (1080p/5s/audio — previously broke the invariant)', () => {
+    const one = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '1080p', durationSeconds: 5, generateAudio: true, sampleCount: 1 })
+    const two = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '1080p', durationSeconds: 5, generateAudio: true, sampleCount: 2 })
+    expect(two.usd).toBe(one.usd * 2)
   })
 })
 
