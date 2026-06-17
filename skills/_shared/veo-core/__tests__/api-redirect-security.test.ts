@@ -120,6 +120,26 @@ describe('downloadFile — socket-idle timeout (belt) and total deadline (suspen
       await new Promise<void>((r) => server.close(() => r()))
     }
   }, 10_000)
+
+  it('rejects when the server accepts the socket but never sends headers (pre-header stall)', async () => {
+    // Accept the connection and never write a response. The request-level timeout
+    // must fire within socketIdleMs instead of hanging until the total deadline.
+    const server = http.createServer(() => {
+      // intentionally never call res.writeHead / res.end
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    try {
+      const out = path.join(tmpDir, 'noheaders.bin')
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/hang`, out, 'tok', { socketIdleMs: 200 })
+      ).rejects.toThrow(/headers timeout|idle/i)
+      expect(fs.existsSync(out)).toBe(false)
+    } finally {
+      server.closeAllConnections?.()
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  }, 10_000)
 })
 
 describe('api timeout constants are wired', () => {

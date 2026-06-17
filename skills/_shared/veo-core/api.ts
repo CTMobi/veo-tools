@@ -228,7 +228,7 @@ function tmpSuffixedPath(outputPath: string): string {
 
 async function downloadFromGcs(gcsUri: string, outputPath: string): Promise<void> {
   const tmp = tmpSuffixedPath(outputPath)
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  await fs.promises.mkdir(path.dirname(outputPath), { recursive: true })
   const rest = gcsUri.slice(5)
   const slash = rest.indexOf('/')
   if (slash === -1) throw new Error(`Malformed gs:// URI: ${gcsUri}`)
@@ -237,9 +237,9 @@ async function downloadFromGcs(gcsUri: string, outputPath: string): Promise<void
   const storage = new Storage()
   try {
     await storage.bucket(bucket).file(object).download({ destination: tmp })
-    fs.renameSync(tmp, outputPath)
+    await fs.promises.rename(tmp, outputPath)
   } catch (e) {
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    await fs.promises.unlink(tmp).catch(() => {})
     throw e
   }
 }
@@ -255,7 +255,7 @@ async function downloadFromHttps(
   socketIdleMs: number
 ): Promise<void> {
   const tmp = tmpSuffixedPath(outputPath)
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  await fs.promises.mkdir(path.dirname(outputPath), { recursive: true })
 
   const deadline = Date.now() + TOTAL_DEADLINE_MS
   let currentUrl = new URL(initialUrl)
@@ -264,7 +264,7 @@ async function downloadFromHttps(
 
   while (true) {
     if (Date.now() > deadline) {
-      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+      await fs.promises.unlink(tmp).catch(() => {})
       throw new Error(`downloadFile: total deadline exceeded (${TOTAL_DEADLINE_MS}ms)`)
     }
 
@@ -287,6 +287,9 @@ async function downloadFromHttps(
           headers,
         },
         (res) => {
+          // Headers arrived: disarm the pre-header watchdog. From here the per-chunk
+          // idle timer (armIdle, below) governs the body phase.
+          req.setTimeout(0)
           const status = res.statusCode ?? 0
           if (status >= 300 && status < 400 && res.headers.location) {
             resolve({ kind: 'redirect', location: res.headers.location })
@@ -335,22 +338,27 @@ async function downloadFromHttps(
           })
         }
       )
+      // Pre-header watchdog: the per-chunk idle timer above is only armed inside the
+      // response callback, so a server that accepts the socket but never sends headers
+      // would otherwise hang until the total deadline. A request-level timeout covers
+      // that pre-header wait, rejecting within socketIdleMs.
+      req.setTimeout(socketIdleMs, () => req.destroy(new Error(`headers timeout > ${socketIdleMs}ms`)))
       req.on('error', (e) => resolve({ kind: 'error', message: String(e) }))
       req.end()
     })
 
     if (result.kind === 'done') {
-      fs.renameSync(tmp, outputPath)
+      await fs.promises.rename(tmp, outputPath)
       return
     }
     if (result.kind === 'error') {
-      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+      await fs.promises.unlink(tmp).catch(() => {})
       throw new Error(result.message)
     }
     // Redirect
     redirects++
     if (redirects > MAX_REDIRECTS) {
-      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+      await fs.promises.unlink(tmp).catch(() => {})
       throw new Error(`downloadFile: too many redirects (>${MAX_REDIRECTS})`)
     }
     let decision: { nextUrl: URL; crossOrigin: boolean }
@@ -358,7 +366,7 @@ async function downloadFromHttps(
       // decideRedirect rejects HTTPS->HTTP downgrades and flags cross-origin hops.
       decision = decideRedirect(currentUrl, result.location)
     } catch (e) {
-      try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+      await fs.promises.unlink(tmp).catch(() => {})
       throw e
     }
     // Cross-origin Authorization stripping (RFC 6454)
