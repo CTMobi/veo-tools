@@ -4,7 +4,7 @@
 require('../../_shared/veo-core/bootstrap')
 
 import { generateVideo } from '@veo-core/generate'
-import { loadStoryboard, runDryRun, parseArgs } from './multi-cli-utils'
+import { loadStoryboard, runDryRun, validateShots, parseArgs } from './multi-cli-utils'
 
 async function main(): Promise<void> {
   const { storyboardPath, dryRun, help } = parseArgs(process.argv.slice(2))
@@ -16,9 +16,14 @@ async function main(): Promise<void> {
   if (!storyboardPath) { console.error('--storyboard required'); process.exit(2) }
   const sb = loadStoryboard(storyboardPath)
 
-  // Validate + cost every shot (exits 2 on first invalid shot — no paid call yet)
-  runDryRun(sb)
-  if (dryRun) return
+  // Always validate every shot (exits 2 on first invalid shot — no paid call yet).
+  // Cost estimates are printed ONLY under --dry-run; a live run must keep stdout
+  // clean for the per-shot JSON results below.
+  if (dryRun) {
+    runDryRun(sb)
+    return
+  }
+  validateShots(sb)
 
   for (const [i, shot] of sb.shots.entries()) {
     console.log(`generating shot ${i}...`)

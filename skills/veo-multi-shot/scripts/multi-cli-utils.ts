@@ -40,13 +40,40 @@ export function parseArgs(argv: string[]): MultiArgs {
 
 export function loadStoryboard(p: string): Storyboard {
   const raw = fs.readFileSync(p, 'utf8')
-  const parsed = JSON.parse(raw)
-  if (!parsed || !Array.isArray(parsed.shots)) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (e) {
+    // Surface a clear, contextual error instead of a raw SyntaxError stack so a
+    // malformed storyboard file is diagnosable (which file, what went wrong).
+    throw new Error(`invalid storyboard JSON at ${p}: ${(e as Error).message}`)
+  }
+  if (!parsed || !Array.isArray((parsed as { shots?: unknown }).shots)) {
     throw new Error(`storyboard missing "shots" array: ${p}`)
   }
   return parsed as Storyboard
 }
 
+// validateShots — validate every shot, exiting 2 on the first invalid shot (before
+// any paid call). Returns the resolved (auto-fixed) configs. This runs on EVERY run,
+// live or dry; cost printing is separated out into runDryRun.
+export function validateShots(sb: Storyboard): VeoConfig[] {
+  const resolved: VeoConfig[] = []
+  for (const [i, shot] of sb.shots.entries()) {
+    const v = validateConfig(shot)
+    if (!v.valid) {
+      console.error(`shot ${i}: invalid — ${v.errors.join('; ')}`)
+      process.exit(2)
+    }
+    resolved.push(v.autoFixed)
+  }
+  return resolved
+}
+
+// runDryRun — print cost estimates only. Should only be called under --dry-run; a
+// live run validates (validateShots) but must NOT print cost lines to stdout, which
+// would pollute the JSON output. estimateCost throws on an unknown model/resolution
+// (validateConfig only warns there), so catch per-shot and exit 2 as a config error.
 export function runDryRun(sb: Storyboard): void {
   let totalCost = 0
   for (const [i, shot] of sb.shots.entries()) {
@@ -55,7 +82,13 @@ export function runDryRun(sb: Storyboard): void {
       console.error(`shot ${i}: invalid — ${v.errors.join('; ')}`)
       process.exit(2)
     }
-    const cost = estimateCost(v.autoFixed)
+    let cost: ReturnType<typeof estimateCost>
+    try {
+      cost = estimateCost(v.autoFixed)
+    } catch (e) {
+      console.error(`shot ${i}: ${e instanceof Error ? e.message : String(e)}`)
+      process.exit(2)
+    }
     totalCost += cost.usd
     console.log(`shot ${i}: ${cost.breakdown} — $${cost.usd.toFixed(2)}`)
   }

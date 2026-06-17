@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { loadStoryboard, runDryRun, parseArgs } from '../multi-cli-utils'
+import { loadStoryboard, runDryRun, validateShots, parseArgs } from '../multi-cli-utils'
 
 let tmpDir: string
 
@@ -47,6 +47,42 @@ describe('loadStoryboard', () => {
     fs.writeFileSync(p, JSON.stringify({ name: 'no shots here' }))
     expect(() => loadStoryboard(p)).toThrow(/shots/)
   })
+
+  it('throws a clear contextual error (not a raw SyntaxError) on malformed JSON (CLAUDE-2)', () => {
+    const p = path.join(tmpDir, 'malformed.json')
+    fs.writeFileSync(p, '{ "shots": [ }') // invalid JSON
+    expect(() => loadStoryboard(p)).toThrow(/invalid storyboard JSON at .*malformed\.json:/)
+  })
+})
+
+describe('validateShots', () => {
+  it('returns resolved configs for valid shots without printing cost lines (CLAUDE-NEW)', () => {
+    const logs: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((s: unknown) => { logs.push(String(s)) })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const sb = { shots: [{ prompt: 'a', outputPath: '/tmp/a.mp4' }] }
+    const resolved = validateShots(sb)
+    expect(resolved.length).toBe(1)
+    expect(resolved[0]?.model).toBeTruthy()
+    // No cost/total lines on a live validation pass.
+    expect(logs.some((l) => /estimated cost|^shot /.test(l))).toBe(false)
+    log.mockRestore(); err.mockRestore(); exit.mockRestore()
+  })
+
+  it('exits 2 on the first invalid shot (CLAUDE-NEW)', () => {
+    const errs: string[] = []
+    const err = vi.spyOn(console, 'error').mockImplementation((s: unknown) => { errs.push(String(s)) })
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const sb = { shots: [{ prompt: 'a' } as never] } // missing output dest -> rule #9
+    expect(() => validateShots(sb)).toThrow(/exit:2/)
+    expect(errs.some((s) => /shot 0/.test(s))).toBe(true)
+    err.mockRestore(); exit.mockRestore()
+  })
 })
 
 describe('runDryRun', () => {
@@ -67,6 +103,22 @@ describe('runDryRun', () => {
     runDryRun(sb)
     expect(logs.filter((l) => l.startsWith('shot ')).length).toBe(2)
     expect(logs.some((l) => l.startsWith('total estimated cost:'))).toBe(true)
+    log.mockRestore(); err.mockRestore(); exit.mockRestore()
+  })
+
+  it('exits 2 with a clear per-shot error (not an uncaught throw) on an unknown model (COP3)', () => {
+    const errs: string[] = []
+    const err = vi.spyOn(console, 'error').mockImplementation((s: unknown) => { errs.push(String(s)) })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    // An unknown model passes validation (only a warning) but estimateCost throws.
+    const sb = {
+      shots: [{ prompt: 'a', outputPath: '/tmp/a.mp4', model: 'veo-9-imaginary-001' }],
+    }
+    expect(() => runDryRun(sb)).toThrow(/exit:2/)
+    expect(errs.some((s) => /shot 0/.test(s) && /unknown model/i.test(s))).toBe(true)
     log.mockRestore(); err.mockRestore(); exit.mockRestore()
   })
 
