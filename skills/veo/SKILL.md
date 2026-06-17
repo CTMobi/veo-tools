@@ -16,10 +16,52 @@ This skill transforms user intent into cinematic video using Google Veo 3.1. Eve
 Before crafting any prompt, gather context through conversation:
 
 **Required Context:**
-- **USE CASE**: hero-background | marketing | social | product | ambient
+- **USE CASE**: hero-background | marketing | social | product | ambient | loop | storytelling
 - **MOOD**: ethereal | kinetic | contemplative | industrial | organic | futuristic | vintage | dramatic | abstract
 - **TECHNICAL REQUIREMENTS**: aspect ratio, duration, resolution needs
 - **ANTI-GOALS**: What must NOT appear (competing brands, specific imagery to avoid)
+
+### Use-case-aware defaults
+
+| Use case          | Audio default | Duration default (s) |
+|-------------------|---------------|----------------------|
+| hero-background   | off           | 4                    |
+| ambient           | off           | 4                    |
+| loop              | off           | 4                    |
+| social            | on            | 8                    |
+| marketing         | on            | 8                    |
+| product           | on            | 8                    |
+| storytelling      | on            | 8                    |
+
+_Notes:_
+- Explicit `--audio` / `--no-audio` always wins.
+- Library/CLI default duration is `8`; the USE CASE override is a *Phase 1 SKILL.md hint*, not a library default.
+- Unspecified use case → audio defaults to `on` (Veo 3.1 API native default); duration defaults to `8`.
+
+### Phase 1 — deriving the audio flag (deterministic)
+
+When the USE CASE is known, look up its audio default in the table above:
+
+- If it resolves to **off** (`hero-background`, `ambient`, `loop`), you MUST pass `--no-audio` on the generated command line — the library default is `on` for every Veo 3.x model and will NOT turn audio off for you.
+- If it resolves to **on**, pass nothing (the library default already produces audio) or `--audio` to be explicit.
+- An explicit user request for audio on/off always wins over the use-case default; pass the matching `--audio` / `--no-audio` flag.
+
+Example — hero-background:
+`veo-generate --prompt "..." --output out.mp4 --no-audio`   ← audio OFF, derived from use case
+
+### Model decision table
+
+| Use case          | Quality                  | Fast                          | Lite                            |
+|-------------------|--------------------------|-------------------------------|---------------------------------|
+| hero-background   | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | veo-3.1-lite-generate-001       |
+| ambient           | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | veo-3.1-lite-generate-001       |
+| loop              | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | veo-3.1-lite-generate-001       |
+| social            | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | —                               |
+| marketing         | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | —                               |
+| product           | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | —                               |
+| storytelling      | veo-3.1-generate-001     | veo-3.1-fast-generate-001     | —                               |
+
+Unknown use case → falls back to `{ quality: resolveDefaultModel(), fast: 'veo-3.1-fast-generate-001' }` (no `lite`).
 
 **If the user request is vague, ASK clarifying questions:**
 
@@ -63,24 +105,32 @@ For hero backgrounds, ALWAYS include:
 Reference `references/cinematography-lexicon.md` for precise terminology.
 Reference `examples/hero-prompts.md` for proven patterns.
 
+### Audio Layer — the 6th element (when audio is on)
+
+When audio is on, extend the 5-Element Formula to 6:
+
+```
+[Cinematography] + [Subject] + [Action] + [Context] + [Style & Ambiance] + [Audio Layer]
+```
+
+Audio Layer = at least one of: **Dialogue** (always quoted, e.g. `a narrator says: "the future arrives in silence"`), **SFX** (`metallic click, shattering glass`), or **Ambient** (`wind through pines, distant ocean echo`). See `references/audio-lexicon.md`.
+
+### Auto-suggest a negative prompt
+
+For `hero-background`, `ambient`, and `loop` use cases, proactively suggest a negative prompt to keep the frame clean for overlaid UI/text:
+
+> Suggested `--negative-prompt "text overlays, logos, watermarks"`
+
+Confirm with the user before applying. **Guidance**: phrase negative prompts as a *list of unwanted elements* (`"text, logos"`), NOT as imperatives (`"no text"`, `"don't show logos"`) — the API treats them as a list, not instructions.
+
 ### PHASE 3: VALIDATE (MANDATORY)
 
-Before presenting to user, verify against `validation/prompt-checklist.md`:
+Prompt-quality checks (see `validation/prompt-checklist.md`, softened in this release):
+- Text/UI in frame → warning only when text is meant to be visible in frame (quoted dialogue is natively supported).
+- Single camera movement → reject for `loop` / `hero-background` only; warning otherwise.
+- `audio=on` without an Audio Layer descriptor → warning.
 
-**REJECT (Do Not Generate):**
-- [ ] Multiple camera movements ("dolly while panning")
-- [ ] Text/UI element requests (Veo cannot render readable text)
-- [ ] Conflicting descriptors ("dynamic but subtle", "energetic but calm")
-
-**WARNING (Suggest Improvements):**
-- [ ] Generic descriptions without material specificity
-- [ ] Missing lighting/atmosphere direction
-- [ ] Duration mismatch for content type
-
-**LOOP-SPECIFIC (for hero backgrounds):**
-- [ ] Contains "seamless loop"
-- [ ] Contains "locked camera" or "static camera"
-- [ ] Motion is subtle/gentle (not dramatic)
+Hard API-constraint check (NEW): before presenting, run the library validator on the resolved config — invoke `veo-generate --dry-run` (which calls `validateConfig()` internally). `validateConfig()` never throws; it returns auto-fixes (e.g. duration bumped to 8 for 1080p/4K), warnings, or hard errors (e.g. duration not allowed for the model, Veo 2 + audio, 1080p on Veo 2, outputPath/storageUri XOR). Surface its auto-adjustments and warnings in Phase 4 PRESENT; if it returns errors, fix the config and re-run before presenting.
 
 ### PHASE 4: PRESENT & AWAIT APPROVAL
 
@@ -91,41 +141,38 @@ Format your presentation as:
 ```
 READY FOR REVIEW:
 
-Prompt:
-[Full crafted prompt]
-
+Prompt: [...]
 Settings:
-- Aspect Ratio: [16:9 | 9:16]
-- Duration: [4s | 6s | 8s]
-- Resolution: [720p | 1080p]
-- Audio: [off | on]
+  Model: veo-3.1-generate-001 (GA quality)
+  Aspect: 16:9
+  Duration: 8s
+  Resolution: 1080p
+  Audio: on (explicit --audio override; hero-background default is off)
+  Person generation: allow_adult
+  Negative prompt: "text, logos, watermarks"
 
-Validation: PASSED
-- Single camera movement
-- No text requests
-- Loop flags present (if applicable)
-- Motion intensity appropriate
+Auto-adjustments applied:
+  - Duration set to 8s (required by 1080p; user did not pass --duration, see validation rule #2 case (a))
 
-Shall I generate this video? (Cost: ~$0.50, Time: 2-4 minutes)
+Validation: PASSED (2 warnings)
+  ⚠ Audio is on but prompt has no Audio Layer descriptors — consider adding dialogue/SFX/ambient
+  ⚠ Use case "hero-background" but audio=on — sure?
+
+Cost estimate: ~$X.XX (Veo 3.1 quality, 8s, 1080p, audio)
+Generation time: 2-4 minutes
+
+Shall I generate?
 ```
 
-If validation fails, present issues and suggest fixes:
+> The `Cost estimate: ~$X.XX` line is a template. Produce the real value by running
+> `veo-generate --dry-run` on the resolved config — its `estimated cost:` line is computed
+> by `estimateCost(v.autoFixed)` and already includes the breakdown
+> (model, duration, resolution, audio, sampleCount multiplier). Substitute that number
+> for `~$X.XX`. Never hand-estimate the cost. The CLI `--dry-run` output is the abbreviated
+> machine form; the PRESENT block above is the conversational form — they carry the same
+> resolved settings, auto-adjustments, warnings, and the same estimateCost() number.
 
-```
-VALIDATION ISSUES FOUND:
-
-Prompt:
-[Problematic prompt]
-
-Issues:
-- REJECT: Multiple camera movements detected ("dolly while panning")
-- WARNING: No material specificity for "metal surface"
-
-Suggested Fix:
-[Corrected prompt]
-
-Shall I proceed with the corrected version?
-```
+If validation fails, present the errors from `validateConfig()`, suggest fixes, fix the config, and re-run `--dry-run` before presenting again.
 
 ### PHASE 5: GENERATE
 
@@ -434,6 +481,23 @@ ALWAYS generate:
 - Coherent mood that commits to a direction
 - Appropriate motion intensity for use case
 - Technical settings matched to delivery context
+
+---
+
+## New parameters (Foundation)
+
+Every cross-cutting flag, with one example each:
+
+| Flag | Example |
+|---|---|
+| `--negative-prompt` | `--negative-prompt "text overlays, logos, watermarks"` (list of unwanted elements, not imperatives like "no text") |
+| `--enhance-prompt` / `--no-enhance-prompt` | `--no-enhance-prompt` (power users disable Google's internal rewrite for tighter control) |
+| `--storage-uri` | `--storage-uri gs://my-bucket/out/` (server-side delivery; mutually exclusive with `--output`) |
+| `--person-generation` | `--person-generation allow_adult` (`allow_all` \| `allow_adult` \| `disallow`; EU/UK/CH/MENA auto-downgrade `allow_all`→`allow_adult`) |
+| `--seed` | `--seed 12345` (integer 0–2147483647 = 2^31−1; determinism is best-effort on Veo 3) |
+| `--resolution 4k` | `--resolution 4k` (requires `--duration 8`; not available on Veo 2) |
+| `--add-watermark` / `--no-add-watermark` | `--no-add-watermark` (SynthID watermark is on by default on Vertex; disable only for internal QA) |
+| `--include-rai-reason` | `--include-rai-reason` (include the Responsible-AI block reason in the error response for debugging safety rejections) |
 
 ---
 
