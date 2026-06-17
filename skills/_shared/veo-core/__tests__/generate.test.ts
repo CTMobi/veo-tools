@@ -125,6 +125,36 @@ describe('generateVideo', () => {
     expect(api.downloadFile).not.toHaveBeenCalled()
   })
 
+  it('storageUri branch: throws a Responsible-AI error when no gcsUri and candidates were filtered', async () => {
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      done: true,
+      videoUrl: undefined,
+      gcsUri: undefined,
+      videoBytes: undefined,
+      raiFilteredCount: 2,
+      raw: {},
+    })
+    await expect(
+      generateVideo({ prompt: 'a sunset', storageUri: 'gs://bucket/obj.mp4' })
+    ).rejects.toThrow(/responsible ai|filter/i)
+    expect(api.downloadFile).not.toHaveBeenCalled()
+  })
+
+  it('storageUri branch: throws a no-output error when neither gcsUri nor rai-filter', async () => {
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      done: true,
+      videoUrl: undefined,
+      gcsUri: undefined,
+      videoBytes: undefined,
+      raiFilteredCount: 0,
+      raw: {},
+    })
+    await expect(
+      generateVideo({ prompt: 'a sunset', storageUri: 'gs://bucket/obj.mp4' })
+    ).rejects.toThrow(/no server-side output/i)
+    expect(api.downloadFile).not.toHaveBeenCalled()
+  })
+
   it('throws a Responsible-AI error when all candidates were filtered (no video)', async () => {
     ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       done: true,

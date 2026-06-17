@@ -47,9 +47,20 @@ export async function generateVideo(config: VeoConfig): Promise<GenerationResult
   }
 
   if (resolved.storageUri !== undefined) {
-    // Server-side delivery — no download.
-    result.gcsUri = poll.gcsUri ?? resolved.storageUri
-    return result
+    // Server-side delivery — no download. Mirror the local branch: a missing gcsUri
+    // is NOT success. Distinguish RAI-filtered (every candidate suppressed) from a
+    // generic no-output result so the error is actionable.
+    if (poll.gcsUri) {
+      result.gcsUri = poll.gcsUri
+      return result
+    }
+    if (poll.raiFilteredCount && poll.raiFilteredCount > 0) {
+      throw new Error(
+        `generateVideo: all ${poll.raiFilteredCount} candidate(s) were blocked by the Responsible AI filter. ` +
+          `Revise the prompt (e.g. remove sensitive content), or pass includeRaiReason to surface the specific reason.`
+      )
+    }
+    throw new Error('generateVideo: no server-side output produced (storageUri delivery returned no gcsUri)')
   }
 
   // Local delivery. Three real cases, in priority order:
