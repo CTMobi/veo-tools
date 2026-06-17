@@ -25,7 +25,16 @@ async function main(): Promise<void> {
       console.error('Invalid:', v.errors.join('; '))
       process.exit(2)
     }
-    const cost = estimateCost(v.autoFixed)
+    // estimateCost throws on an unknown model/resolution (validateConfig only warns
+    // there). Treat that as a config error (exit 2), not a crash (exit 1 via top-level
+    // catch), to stay consistent with the other CLI validation failures above.
+    let cost: ReturnType<typeof estimateCost>
+    try {
+      cost = estimateCost(v.autoFixed)
+    } catch (e) {
+      console.error('Invalid:', e instanceof Error ? e.message : String(e))
+      process.exit(2)
+    }
     console.log('PRESENT')
     console.log(`  model:           ${v.autoFixed.model}`)
     console.log(`  resolution:      ${v.autoFixed.resolution}`)
