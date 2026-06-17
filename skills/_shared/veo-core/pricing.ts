@@ -33,8 +33,10 @@ export function estimateCost(config: VeoConfig): { usd: number; breakdown: strin
   const model      = config.model      ?? 'veo-3.1-generate-001'
   const resolution = config.resolution ?? '720p'
   const duration   = config.durationSeconds ?? 8
-  const audio      = config.generateAudio === true
   const samples    = config.sampleCount ?? 1
+  // Mirror validation.ts's audio default so a raw (non-validated) config does not
+  // undercount: unspecified audio is true on Veo 3.x (native default), false on Veo 2.
+  const audio      = config.generateAudio ?? !model.startsWith('veo-2')
 
   const base = BASE_USD_PER_SEC[model]
   if (base === undefined) {

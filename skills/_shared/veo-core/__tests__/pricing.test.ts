@@ -55,6 +55,24 @@ describe('estimateCost — audio increases cost on Veo 3.x', () => {
   })
 })
 
+describe('estimateCost — audio default mirrors validation (Veo 3.x default = true)', () => {
+  it('prices audio for a Veo 3.x config with generateAudio unset (raw, non-validated config)', () => {
+    // validation.ts defaults unspecified Veo-3.x audio to true; estimateCost must
+    // do the same so a programmatic caller passing a raw config does not undercount.
+    const unset    = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: 8, sampleCount: 1 })
+    const explicit = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: 8, generateAudio: true, sampleCount: 1 })
+    expect(unset.usd).toBe(explicit.usd)
+    expect(unset.breakdown).toContain('audio')
+  })
+
+  it('does NOT price audio for a Veo 2 config with generateAudio unset (Veo 2 has no audio)', () => {
+    const unset = estimateCost({ ...base, model: 'veo-2.0-generate-001', resolution: '720p', durationSeconds: 8, sampleCount: 1 })
+    const off   = estimateCost({ ...base, model: 'veo-2.0-generate-001', resolution: '720p', durationSeconds: 8, generateAudio: false, sampleCount: 1 })
+    expect(unset.usd).toBe(off.usd)
+    expect(unset.breakdown).not.toContain('audio')
+  })
+})
+
 describe('estimateCost — higher resolution >= lower at same duration', () => {
   it('1080p >= 720p', () => {
     const lo = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p',  durationSeconds: 8, generateAudio: false, sampleCount: 1 })
