@@ -5,7 +5,8 @@
   "description": "Veo video generation skills — shared library + skills.",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.14.0",
