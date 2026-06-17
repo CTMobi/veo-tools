@@ -48,9 +48,9 @@ export function parseArgs(argv: string[]): Record<string, string | boolean> {
         console.error(`Flag ${a} requires a value`)
         process.exit(2)
       }
-      out[a] = v
+      out[def.name] = v
     } else {
-      out[a] = true
+      out[def.name] = true
     }
   }
   return out
