@@ -23,9 +23,11 @@ async function main(): Promise<void> {
     runDryRun(sb)
     return
   }
-  validateShots(sb)
+  // Capture the resolved (auto-fixed) configs and generate from those, rather than
+  // re-iterating the raw sb.shots (which would discard validateShots's resolution).
+  const resolvedShots = validateShots(sb)
 
-  for (const [i, shot] of sb.shots.entries()) {
+  for (const [i, shot] of resolvedShots.entries()) {
     console.log(`generating shot ${i}...`)
     const r = await generateVideo(shot)
     console.log(JSON.stringify(r, null, 2))
