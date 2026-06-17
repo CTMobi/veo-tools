@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const getClientMock = vi.fn()
 const getAccessTokenMock = vi.fn()
-const GoogleAuthMock = vi.fn(function () {
+const GoogleAuthMock = vi.fn((_opts?: { scopes?: string[] }) => {
   return { getClient: () => getClientMock() }
 })
 
@@ -36,7 +36,7 @@ describe('getAccessToken', () => {
     const { getAccessToken } = await import('@veo-core/auth')
     await getAccessToken()
     expect(GoogleAuthMock).toHaveBeenCalledTimes(1)
-    const ctorArg = GoogleAuthMock.mock.calls[0]?.[0] as { scopes?: string[] }
+    const ctorArg = GoogleAuthMock.mock.calls[0]?.[0]
     expect(ctorArg?.scopes).toEqual(['https://www.googleapis.com/auth/cloud-platform'])
   })
 })
