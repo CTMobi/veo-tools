@@ -63,6 +63,7 @@ describe('Rule #1 — durations per model', () => {
   })
   it('unknown model => soft warning, not error', () => {
     const r = validateConfig(ok({ model: 'veo-9.9-fake', durationSeconds: 99 }))
+    expect(r.valid).toBe(true)
     if (r.valid) expect(r.warnings.some((w) => /unknown model/i.test(w))).toBe(true)
   })
 })
