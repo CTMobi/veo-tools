@@ -4,20 +4,14 @@
 require('../../_shared/veo-core/bootstrap')
 
 import { generateVideo } from '@veo-core/generate'
-import { loadStoryboard, runDryRun } from './multi-cli-utils'
+import { loadStoryboard, runDryRun, parseArgs } from './multi-cli-utils'
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2)
-  let storyboardPath = ''
-  let dryRun = false
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--storyboard') storyboardPath = argv[++i] ?? ''
-    else if (argv[i] === '--dry-run') dryRun = true
-    else if (argv[i] === '--help') {
-      console.log('--storyboard PATH  storyboard JSON with {shots: VeoConfig[]}')
-      console.log('--dry-run           validate + cost only')
-      return
-    }
+  const { storyboardPath, dryRun, help } = parseArgs(process.argv.slice(2))
+  if (help) {
+    console.log('--storyboard PATH  storyboard JSON with {shots: VeoConfig[]}')
+    console.log('--dry-run           validate + cost only')
+    return
   }
   if (!storyboardPath) { console.error('--storyboard required'); process.exit(2) }
   const sb = loadStoryboard(storyboardPath)

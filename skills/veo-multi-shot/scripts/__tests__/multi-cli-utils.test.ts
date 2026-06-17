@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { loadStoryboard, runDryRun } from '../multi-cli-utils'
+import { loadStoryboard, runDryRun, parseArgs } from '../multi-cli-utils'
 
 let tmpDir: string
 
@@ -11,6 +11,34 @@ beforeEach(() => {
 })
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+describe('parseArgs', () => {
+  it('exits 2 when --storyboard is followed by another flag (--storyboard --dry-run)', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const errs: string[] = []
+    const err = vi.spyOn(console, 'error').mockImplementation((s: unknown) => { errs.push(String(s)) })
+    expect(() => parseArgs(['--storyboard', '--dry-run'])).toThrow(/exit:2/)
+    expect(errs.some((s) => /--storyboard requires a value/i.test(s))).toBe(true)
+    exit.mockRestore(); err.mockRestore()
+  })
+
+  it('exits 2 on an unknown flag', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => parseArgs(['--nope'])).toThrow(/exit:2/)
+    exit.mockRestore(); err.mockRestore()
+  })
+
+  it('parses --storyboard PATH --dry-run correctly', () => {
+    const a = parseArgs(['--storyboard', '/tmp/sb.json', '--dry-run'])
+    expect(a.storyboardPath).toBe('/tmp/sb.json')
+    expect(a.dryRun).toBe(true)
+  })
 })
 
 describe('loadStoryboard', () => {
