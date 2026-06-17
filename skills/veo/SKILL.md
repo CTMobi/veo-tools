@@ -418,13 +418,13 @@ npx ts-node scripts/veo-generate.ts \
 ### API Parameters
 | Parameter | Options | Default | Notes |
 |-----------|---------|---------|-------|
-| `model` | `veo-3.1-generate-001`, `veo-3.1-fast-generate-001` | quality model | Fast model for iteration |
+| `model` | see `constants.ts` `AVAILABLE_MODELS` | `veo-3.1-generate-001` | Use fast/lite variants for iteration; use-case table above gives per-use-case guidance |
 | `aspectRatio` | `16:9`, `9:16` | `16:9` | 9:16 for vertical/mobile |
-| `durationSeconds` | `4`, `6`, `8` | `8` | API only supports these values |
-| `resolution` | `720p`, `1080p` | `720p` | 1080p for high-bandwidth |
-| `generateAudio` | `true`, `false` | `false` | Enable for marketing |
-| `sampleCount` | `1-4` | `1` | Multiple variations |
-| `seed` | integer | random | Reproducibility |
+| `durationSeconds` | `4`, `6`, `8` | `8` | API only supports these values (Veo 2: `5`, `6`, `8`) |
+| `resolution` | `720p`, `1080p`, `4k` | `720p` | `4k` requires `--duration 8`; not available on Veo 2 |
+| `generateAudio` | `true`, `false` | `true` (Veo 3.x); forced `false` on Veo 2 | Use-case defaults override this — see use-case table above |
+| `sampleCount` | `1-4` (Veo 3); `1-2` (Veo 2) | `1` | Multiple variations |
+| `seed` | integer 0–2147483647 | random | Best-effort on Veo 3 |
 
 ### Duration Strategy
 
