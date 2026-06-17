@@ -7,10 +7,16 @@ vi.mock('@veo-core/auth', () => ({
 
 vi.mock('@veo-core/api', () => ({
   submitGeneration: vi.fn(async () => 'op/123'),
+  // DEFAULT delivery (no storageUri) returns the video inline as bytesBase64Encoded,
+  // NOT a uri/gcsUri (api.ts:135-138, verified live 2026-06-17). The default mock
+  // mirrors that real shape so the headline test exercises the real default path.
   pollOperation: vi.fn(async () => ({
     done: true,
-    videoUrl: 'https://download.example/video.mp4',
+    videoUrl: undefined,
     gcsUri: undefined,
+    videoBytes: 'AAECAwQF',
+    mimeType: 'video/mp4',
+    raiFilteredCount: 0,
     raw: {},
   })),
   downloadFile: vi.fn(async () => undefined),
@@ -34,7 +40,7 @@ import { generateVideo } from '@veo-core/generate'
 import * as api from '@veo-core/api'
 
 describe('generateVideo', () => {
-  it('returns valid GenerationResult when validation passes (outputPath branch)', async () => {
+  it('returns valid GenerationResult and writes inline bytes on the default delivery (outputPath branch)', async () => {
     const r = await generateVideo({
       prompt: 'a sunset',
       outputPath: '/tmp/x.mp4',
@@ -43,7 +49,9 @@ describe('generateVideo', () => {
     expect(r.model).toBe('veo-3.1-generate-001')
     expect(r.videoPath).toBe('/tmp/x.mp4')
     expect(r.gcsUri).toBeUndefined()
-    expect(api.downloadFile).toHaveBeenCalledTimes(1)
+    // Default delivery is inline base64 -> saveInlineVideo, never downloadFile.
+    expect(api.saveInlineVideo).toHaveBeenCalledWith('AAECAwQF', '/tmp/x.mp4')
+    expect(api.downloadFile).not.toHaveBeenCalled()
     // Env wiring is real behavior, not incidental: the stubbed project/location
     // must reach submitGeneration and pollOperation.
     expect(api.submitGeneration).toHaveBeenCalledWith(
@@ -56,6 +64,25 @@ describe('generateVideo', () => {
       expect.anything(),
       expect.objectContaining({ projectId: 'test-proj', location: 'us-central1' })
     )
+  })
+
+  it('downloads via downloadFile when poll returns a fetchable URL (URL-delivery mode)', async () => {
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      done: true,
+      videoUrl: 'https://download.example/video.mp4',
+      gcsUri: undefined,
+      videoBytes: undefined,
+      raw: {},
+    })
+    const r = await generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+    expect(r.videoPath).toBe('/tmp/x.mp4')
+    expect(api.downloadFile).toHaveBeenCalledTimes(1)
+    expect(api.downloadFile).toHaveBeenCalledWith(
+      'https://download.example/video.mp4',
+      '/tmp/x.mp4',
+      expect.anything()
+    )
+    expect(api.saveInlineVideo).not.toHaveBeenCalled()
   })
 
   it('skips download when storageUri is set (gcsUri branch)', async () => {
