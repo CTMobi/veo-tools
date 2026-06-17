@@ -8,7 +8,10 @@ const POLL_INTERVAL_MS = 5_000
 const POLL_TIMEOUT_MS  = 10 * 60 * 1000
 
 function getProjectAndLocation(): { projectId: string; location: string } {
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT
+  // Backwards-compat: the pre-refactor veo-generate.ts read GOOGLE_CLOUD_PROJECT ||
+  // GOOGLE_CLOUD_PROJECT_ID. Preserve the GOOGLE_CLOUD_PROJECT_ID fallback so existing
+  // environments that set only the *_ID variant keep working.
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID
   const location  = process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1'
   if (!projectId) throw new Error('GOOGLE_CLOUD_PROJECT env var is required')
   return { projectId, location }
@@ -44,14 +47,30 @@ export async function generateVideo(config: VeoConfig): Promise<GenerationResult
     durationSeconds: resolved.durationSeconds!,
     resolution:      resolved.resolution!,
     warnings:        v.warnings,
+    // Forward the validator's auto-fix messages (Veo2 audio off, duration bump,
+    // region adjust) so live (non-dry-run) callers can see what was changed.
+    autoFixMessages: v.autoFixMessages,
+  }
+
+  // sampleCount > 1 silent data loss: pollOperation returns only videos[0], so the
+  // user paid for N videos but Foundation retrieves only the first. Surface a warning
+  // rather than silently dropping (and billing for) the rest.
+  if (resolved.sampleCount && resolved.sampleCount > 1) {
+    result.warnings.push(
+      `sampleCount=${resolved.sampleCount} requested but Foundation returns only the first video; ` +
+        `the others are generated and billed but not retrieved.`
+    )
   }
 
   if (resolved.storageUri !== undefined) {
     // Server-side delivery — no download. Mirror the local branch: a missing gcsUri
     // is NOT success. Distinguish RAI-filtered (every candidate suppressed) from a
-    // generic no-output result so the error is actionable.
-    if (poll.gcsUri) {
-      result.gcsUri = poll.gcsUri
+    // generic no-output result so the error is actionable. The GCS URI may arrive in
+    // poll.gcsUri OR in poll.videoUrl (videos[0].uri) when it starts with 'gs://'.
+    const serverGcsUri =
+      poll.gcsUri ?? (poll.videoUrl?.startsWith('gs://') ? poll.videoUrl : undefined)
+    if (serverGcsUri) {
+      result.gcsUri = serverGcsUri
       return result
     }
     if (poll.raiFilteredCount && poll.raiFilteredCount > 0) {

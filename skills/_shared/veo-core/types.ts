@@ -33,6 +33,7 @@ export type GenerationResult = {
   durationSeconds: number
   resolution: string
   warnings: string[]
+  autoFixMessages?: string[]
 }
 
 export type ImageInput =

@@ -155,6 +155,52 @@ describe('generateVideo', () => {
     expect(api.downloadFile).not.toHaveBeenCalled()
   })
 
+  it('storageUri branch: succeeds when the GCS URI arrives in videoUrl (gs://) with no gcsUri (GEM-A)', async () => {
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      done: true,
+      videoUrl: 'gs://b/o',
+      gcsUri: undefined,
+      videoBytes: undefined,
+      raiFilteredCount: 0,
+      raw: {},
+    })
+    const r = await generateVideo({ prompt: 'a sunset', storageUri: 'gs://b/o' })
+    expect(r.gcsUri).toBe('gs://b/o')
+    expect(r.videoPath).toBeUndefined()
+    expect(api.downloadFile).not.toHaveBeenCalled()
+  })
+
+  it('honors GOOGLE_CLOUD_PROJECT_ID alone (backwards-compat fallback, GEM-B)', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '')
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT_ID', 'legacy-proj')
+    await generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+    expect(api.submitGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ projectId: 'legacy-proj' })
+    )
+  })
+
+  it('warns about silent data loss when sampleCount > 1 (CLAUDE-1)', async () => {
+    const r = await generateVideo({
+      prompt: 'a sunset',
+      outputPath: '/tmp/x.mp4',
+      sampleCount: 3,
+    })
+    expect(r.warnings.some((w) => /sampleCount=3/.test(w) && /only the first video/i.test(w))).toBe(true)
+  })
+
+  it('forwards the validator autoFixMessages on the result (CLAUDE-LOW-1)', async () => {
+    // Veo 2 with unspecified audio => rule #3 auto-fixes generateAudio=false with a message.
+    const r = await generateVideo({
+      prompt: 'a sunset',
+      model: 'veo-2.0-generate-001',
+      outputPath: '/tmp/x.mp4',
+    })
+    expect(Array.isArray(r.autoFixMessages)).toBe(true)
+    expect(r.autoFixMessages!.some((m) => /audio/i.test(m))).toBe(true)
+  })
+
   it('throws a Responsible-AI error when all candidates were filtered (no video)', async () => {
     ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       done: true,
