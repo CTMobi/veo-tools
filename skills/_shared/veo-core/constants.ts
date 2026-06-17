@@ -27,7 +27,7 @@ export const MODEL_DURATIONS: ReadonlyMap<string, ReadonlySet<number>> = new Map
 export const MODEL_SAMPLE_MAX: Readonly<Record<string, number>> = Object.freeze({
   'veo-3.1-generate-001':      4,
   'veo-3.1-fast-generate-001': 4,
-  'veo-3.1-lite-generate-001': 4, // PROVISIONAL — Preview tier; verify in probe pass (M13)
+  'veo-3.1-lite-generate-001': 4, // verified live in M13 probe pass (2026-06-17): sampleCount=4 accepted
   'veo-3.0-generate-001':      4,
   'veo-3.0-fast-generate-001': 4,
   'veo-2.0-generate-001':      2,

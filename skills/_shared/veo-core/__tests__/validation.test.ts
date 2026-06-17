@@ -165,3 +165,24 @@ describe('createValidator — per-rule try/catch', () => {
     if (!r.valid) expect(r.errors.join(' ')).toMatch(/threw|synthetic/i)
   })
 })
+
+describe('Rule #11 — Veo 3 cannot disable prompt enhancement (M13 probe finding 2026-06-17)', () => {
+  // Vertex rejects enhancePrompt=false on Veo 3 at runtime:
+  //   "Veo 3 prompt enhancement cannot be disabled."
+  // This rule surfaces that before the paid API call instead of after.
+  it('veo-3.x + enhancePrompt=false => error', () => {
+    const r = validateConfig(ok({ model: 'veo-3.1-generate-001', enhancePrompt: false }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/enhanc/i)
+  })
+  it('veo-3.x + enhancePrompt=true => valid', () => {
+    expect(validateConfig(ok({ model: 'veo-3.1-generate-001', enhancePrompt: true })).valid).toBe(true)
+  })
+  it('veo-3.x + enhancePrompt undefined => valid (rule guards undefined)', () => {
+    expect(validateConfig(ok({ model: 'veo-3.1-generate-001' })).valid).toBe(true)
+  })
+  it('veo-2 + enhancePrompt=false => valid (constraint is Veo 3 only)', () => {
+    const r = validateConfig(ok({ model: 'veo-2.0-generate-001', enhancePrompt: false, generateAudio: false, resolution: '720p', durationSeconds: 5 }))
+    expect(r.valid).toBe(true)
+  })
+})

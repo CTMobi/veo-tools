@@ -19,7 +19,7 @@ export const FLAGS: Flag[] = [
   { name: '--seed',             takesValue: true,  describe: 'integer seed, 0–2147483647 (2^31−1); determinism is best-effort on Veo 3' },
   { name: '--negative-prompt',  takesValue: true,  describe: 'exclude content matching this phrase' },
   { name: '--enhance-prompt',   takesValue: false, describe: 'server-side prompt enhancement on' },
-  { name: '--no-enhance-prompt',takesValue: false, describe: 'server-side prompt enhancement off' },
+  { name: '--no-enhance-prompt',takesValue: false, describe: 'prompt enhancement off (Veo 2 only — Veo 3 rejects it, rule #11)' },
   { name: '--person-generation',takesValue: true,  describe: 'allow_all | allow_adult | disallow' },
   { name: '--add-watermark',    takesValue: false, describe: 'add SynthID watermark (default true on Vertex)' },
   { name: '--no-add-watermark', takesValue: false, describe: 'disable SynthID watermark' },

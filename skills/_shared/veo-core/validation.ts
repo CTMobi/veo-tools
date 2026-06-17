@@ -156,6 +156,22 @@ const ruleForwardDeclaredWarning: ValidationRule = (c) => {
   return { kind: 'ok' }
 }
 
+// #11 — Veo 3 forbids disabling prompt enhancement. Discovered in the M13 probe
+// pass (2026-06-17): Vertex rejects enhancePrompt=false on Veo 3 at runtime with
+// "Veo 3 prompt enhancement cannot be disabled." Catch it before the paid call.
+// Guards undefined (only an explicit `false` trips it; rule #9-style exception
+// not needed since `!== false` already short-circuits undefined/true).
+const ruleVeo3NoDisableEnhance: ValidationRule = (c) => {
+  if (c.enhancePrompt !== false) return { kind: 'ok' }
+  if (!c.model?.startsWith('veo-3')) return { kind: 'ok' }
+  return {
+    kind: 'error',
+    message:
+      'Veo 3 models do not support disabling prompt enhancement (enhancePrompt is always on). ' +
+      'Remove --no-enhance-prompt, or switch to a Veo 2 model.',
+  }
+}
+
 export const FOUNDATION_RULES: ValidationRule[] = [
   ruleDurationsPerModel,              // #1
   ruleHighResRequiresDuration8,       // #2
@@ -167,6 +183,7 @@ export const FOUNDATION_RULES: ValidationRule[] = [
   ruleAspectRatioEnum,                // #8
   ruleOutputXor,                      // #9
   ruleForwardDeclaredWarning,         // #10
+  ruleVeo3NoDisableEnhance,           // #11
 ]
 
 // ---------- factory ----------

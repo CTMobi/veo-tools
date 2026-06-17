@@ -211,7 +211,7 @@ If the user is not satisfied with results, guide targeted improvements:
 | Wrong color feel | Color direction unclear | Add explicit palette direction |
 | Poor audio sync | Audio Layer too vague | More specific Audio Layer; short dialogue (~5 words) |
 | Cost too high | Quality model / high resolution | Switch to Fast or Lite; try 720p |
-| Output too generic | Server rewrite diluting prompt | Disable `enhancePrompt` (`--no-enhance-prompt`); tighten the prompt |
+| Output too generic | Server rewrite diluting prompt | Tighten the prompt. (`--no-enhance-prompt` is rejected by Veo 3 — enhancement is always on there; it only works on Veo 2.) |
 | Region blocks persons | `allow_all` rejected in region | Set `--person-generation allow_adult` explicitly |
 
 **Iteration Workflow:**
@@ -501,7 +501,7 @@ Every cross-cutting flag, with one example each:
 | Flag | Example |
 |---|---|
 | `--negative-prompt` | `--negative-prompt "text overlays, logos, watermarks"` (list of unwanted elements, not imperatives like "no text") |
-| `--enhance-prompt` / `--no-enhance-prompt` | `--no-enhance-prompt` (power users disable Google's internal rewrite for tighter control) |
+| `--enhance-prompt` / `--no-enhance-prompt` | Enhancement is **on by default and cannot be disabled on Veo 3** (Vertex rejects `enhancePrompt=false` — validation rule #11 catches it before the API call). `--no-enhance-prompt` is accepted only on Veo 2. |
 | `--storage-uri` | `--storage-uri gs://my-bucket/out/` (server-side delivery; mutually exclusive with `--output`) |
 | `--person-generation` | `--person-generation allow_adult` (`allow_all` \| `allow_adult` \| `disallow`; EU/UK/CH/MENA auto-downgrade `allow_all`→`allow_adult`) |
 | `--seed` | `--seed 12345` (integer 0–2147483647 = 2^31−1; determinism is best-effort on Veo 3) |
