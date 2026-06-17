@@ -82,17 +82,20 @@ function parseJsonResponse(source: string, body: string): unknown {
 function makeRequest(url: string, method: string, token: string, body?: unknown): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
+    const isHttps = u.protocol === 'https:'
     const lib = u.protocol === 'http:' ? http : https
+    // Defense-in-depth (mirrors downloadFromHttps): only attach the bearer token
+    // over HTTPS, never over cleartext http://. Production always uses https; the
+    // local test servers use http:// and do not check auth, so this is a no-op there.
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (isHttps) headers.authorization = `Bearer ${token}`
     const req = lib.request(
       {
         method,
         host: u.hostname,
         port: u.port || (u.protocol === 'http:' ? 80 : 443),
         path: u.pathname + u.search,
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
+        headers,
         timeout: REQUEST_TIMEOUT_MS,
       },
       (res) => {
@@ -351,7 +354,12 @@ async function downloadFromHttps(
             resolve({ kind: 'error', message: truncationMessage() ?? String(e) })
           })
           res.pipe(ws)
-          ws.on('finish', () => {
+          // Resolve on 'close', not 'finish': 'finish' fires when the writable side
+          // has flushed, but the underlying fd may not be closed yet — renaming the
+          // .tmp at that point races the close and can fail with EPERM on Windows.
+          // 'close' is emitted only after the fd is released, so the subsequent
+          // rename(tmp, outputPath) is safe. The truncation check moves here too.
+          ws.on('close', () => {
             clearTimeout(idle)
             const truncated = truncationMessage()
             if (truncated !== undefined) {
