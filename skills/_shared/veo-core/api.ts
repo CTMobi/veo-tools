@@ -269,6 +269,11 @@ async function downloadFromHttps(
           }
           armIdle()
           res.on('data', () => armIdle())
+          res.on('error', (e) => {
+            clearTimeout(idle)
+            ws.destroy()
+            resolve({ kind: 'error', message: String(e) })
+          })
           res.pipe(ws)
           ws.on('finish', () => {
             clearTimeout(idle)
