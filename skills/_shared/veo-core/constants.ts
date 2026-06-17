@@ -128,7 +128,9 @@ export function detectRegion(
   gcpLocation?: string,
   envRegion?: string
 ): Region | undefined {
-  if (envRegion) return REGION_VALUES.has(envRegion) ? (envRegion as Region) : undefined
+  // Only honor envRegion when it is a valid Region. A typo in VEO_REGION must NOT
+  // early-return undefined and skip the gcpLocation fallback — fall through instead.
+  if (envRegion && REGION_VALUES.has(envRegion)) return envRegion as Region
   if (!gcpLocation) return undefined
   // Exact matches take precedence (REGIONS is ordered: exact entries first)
   for (const entry of REGIONS) {

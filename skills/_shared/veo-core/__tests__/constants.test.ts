@@ -123,11 +123,16 @@ describe('detectRegion', () => {
   it('unknown region => undefined', () => {
     expect(detectRegion('africa-mars1')).toBeUndefined()
   })
-  it('invalid envRegion (typo) => undefined, not a mis-typed valid region', () => {
+  it('invalid envRegion with no gcpLocation => undefined (no fallback available)', () => {
     expect(detectRegion(undefined, 'USA')).toBeUndefined()
     expect(detectRegion(undefined, 'europe')).toBeUndefined()
     expect(detectRegion(undefined, 'MENA')).toBeUndefined()
-    expect(detectRegion('us-central1', 'not-a-region')).toBeUndefined()
+  })
+  it('invalid envRegion falls through to gcpLocation inference (CR3)', () => {
+    // A typo in VEO_REGION must NOT silently disable region detection; the
+    // gcpLocation-derived region still applies.
+    expect(detectRegion('europe-west2', 'TYPO')).toBe('uk')
+    expect(detectRegion('us-central1', 'not-a-region')).toBe('us')
   })
 })
 
