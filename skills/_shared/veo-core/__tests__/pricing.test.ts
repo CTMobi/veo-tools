@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { estimateCost } from '@veo-core/pricing'
+import { resolveDefaultModel } from '@veo-core/constants'
 import type { VeoConfig } from '@veo-core/types'
 
 const base: VeoConfig = {
@@ -78,6 +79,15 @@ describe('estimateCost — higher resolution >= lower at same duration', () => {
     const lo = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p',  durationSeconds: 8, generateAudio: false, sampleCount: 1 })
     const hi = estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '1080p', durationSeconds: 8, generateAudio: false, sampleCount: 1 })
     expect(hi.usd).toBeGreaterThanOrEqual(lo.usd)
+  })
+})
+
+describe('estimateCost — default model matches resolveDefaultModel (CR4)', () => {
+  it('an undefined-model config prices the centrally-resolved default, not a hardcoded id', () => {
+    const undefModel = estimateCost({ ...base, resolution: '720p', durationSeconds: 8, generateAudio: false, sampleCount: 1 })
+    const explicit   = estimateCost({ ...base, model: resolveDefaultModel(), resolution: '720p', durationSeconds: 8, generateAudio: false, sampleCount: 1 })
+    expect(undefModel.usd).toBe(explicit.usd)
+    expect(undefModel.breakdown).toContain(resolveDefaultModel())
   })
 })
 

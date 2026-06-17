@@ -8,6 +8,7 @@
 // callers display the result to the user; silent $0.00 would be misleading.
 
 import type { VeoConfig } from '@veo-core/types'
+import { resolveDefaultModel } from '@veo-core/constants'
 
 // Per-second base rates (USD/sec) at 720p without audio, sampleCount=1.
 // Resolution multipliers applied below.
@@ -30,7 +31,10 @@ const RESOLUTION_MULTIPLIER: Record<string, number> = {
 const AUDIO_PER_SEC_DELTA = 0.05 // Veo 3.x only; Veo 2 ignores
 
 export function estimateCost(config: VeoConfig): { usd: number; breakdown: string } {
-  const model      = config.model      ?? 'veo-3.1-generate-001'
+  // Use the centralized default so the cost estimate matches the model actually
+  // selected at runtime (validation.ts resolves the same way), rather than a
+  // hardcoded literal that can drift from DEFAULT_MODEL_CHAIN.
+  const model      = config.model      ?? resolveDefaultModel()
   const resolution = config.resolution ?? '720p'
   const duration   = config.durationSeconds ?? 8
   const samples    = config.sampleCount ?? 1
