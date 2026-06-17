@@ -176,7 +176,15 @@ If validation fails, present the errors from `validateConfig()`, suggest fixes, 
 
 ### PHASE 5: GENERATE
 
-Only after user approval, execute generation using `scripts/veo-generate.ts`:
+Run `veo-generate` with the resolved flags. Then map the result to one of these outcomes:
+
+- **Safety filter** (`raiMediaFilteredCount > 0`): report `Safety filter triggered: <reason>` (the reason comes from the RAI response when `--include-rai-reason` was set) and suggest an edited prompt.
+- **Audio blocked, no charge**: report `Audio rejected, no charge applied, video saved without audio` — the video is usable; only the audio track was filtered.
+- **Quota exceeded**: report the quota error and suggest switching to a Fast variant (`--model veo-3.1-fast-generate-001`) to retry.
+- **Region restriction**: person-generation downgrades are pre-applied in Phase 4; if the user forced an explicit `--person-generation allow_all` in a restricted region, the API rejects it — report the failure with the clear region message and the `allow_adult` alternative.
+- **Success**: report the saved video path (or the `gs://` URI when `--storage-uri` was used).
+
+Example invocation:
 
 ```bash
 npx ts-node scripts/veo-generate.ts \
@@ -186,8 +194,6 @@ npx ts-node scripts/veo-generate.ts \
   --resolution 720p \
   --output ./hero-video.mp4
 ```
-
-Report completion with file path.
 
 ### PHASE 6: ITERATE (if unsatisfied)
 
