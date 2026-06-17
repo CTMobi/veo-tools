@@ -212,6 +212,50 @@ describe('generateVideo', () => {
     expect(r.autoFixMessages!.some((m) => /audio/i.test(m))).toBe(true)
   })
 
+  it('survives a transient poll failure (high load) and then succeeds (GEM-NEW-2)', async () => {
+    // First poll throws a transient "high load... try again later" error; the loop
+    // should swallow it, sleep one POLL_INTERVAL, and the retry resolves done.
+    ;(api.pollOperation as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(
+        new Error('The service is currently experiencing high load... Please try again later.')
+      )
+      .mockResolvedValueOnce({
+        done: true,
+        videoUrl: undefined,
+        gcsUri: undefined,
+        videoBytes: 'AAECAwQF',
+        mimeType: 'video/mp4',
+        raiFilteredCount: 0,
+        raw: {},
+      })
+    vi.useFakeTimers()
+    try {
+      const p = generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+      // Cross the 5s POLL_INTERVAL sleep without a real wait. Multiple advances are
+      // harmless and ensure the retry poll runs before we await the result.
+      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      const r = await p
+      expect(r.videoPath).toBe('/tmp/x.mp4')
+      expect(api.pollOperation).toHaveBeenCalledTimes(2)
+      expect(api.saveInlineVideo).toHaveBeenCalledWith('AAECAwQF', '/tmp/x.mp4')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rethrows a permanent poll error promptly without retrying to the deadline (GEM-NEW-2)', async () => {
+    // A permanent error (e.g. invalid argument) must NOT be retried: generateVideo
+    // rejects immediately with that message, and pollOperation is called exactly once.
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('Invalid argument')
+    )
+    await expect(
+      generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+    ).rejects.toThrow(/invalid argument/i)
+    expect(api.pollOperation).toHaveBeenCalledTimes(1)
+  })
+
   it('throws a Responsible-AI error when all candidates were filtered (no video)', async () => {
     ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       done: true,

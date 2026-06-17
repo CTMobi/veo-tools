@@ -6,6 +6,20 @@ import type { VeoConfig, GenerationResult } from '@veo-core/types'
 
 const POLL_INTERVAL_MS = 5_000
 const POLL_TIMEOUT_MS  = 10 * 60 * 1000
+// Max CONSECUTIVE transient poll failures tolerated before giving up. Resets to 0 on
+// any successful poll, so it bounds a burst of glitches, not the total run length.
+const POLL_MAX_TRANSIENT_RETRIES = 5
+
+// isTransientPollError — true only for retryable, NON-permanent poll failures (high
+// load, rate limits, 5xx, network resets). Permanent errors (auth 4xx, RAI / invalid
+// operation messages thrown via parsed.error.message) must NOT match, so we fail fast
+// instead of spinning uselessly until the deadline.
+function isTransientPollError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
+  return /high load|try again|temporarily|unavailable|timed out|timeout|econnreset|etimedout|socket hang up|503|429/.test(
+    msg
+  )
+}
 
 function getProjectAndLocation(): { projectId: string; location: string } {
   // Backwards-compat: the pre-refactor veo-generate.ts read GOOGLE_CLOUD_PROJECT ||
@@ -30,13 +44,27 @@ export async function generateVideo(config: VeoConfig): Promise<GenerationResult
 
   const deadline = Date.now() + POLL_TIMEOUT_MS
   let poll: Awaited<ReturnType<typeof pollOperation>> = { done: false, raw: {} }
+  let transientFailures = 0
   while (Date.now() < deadline) {
-    poll = await pollOperation(operationName, token, {
-      projectId,
-      location,
-      model: resolved.model!,
-    })
-    if (poll.done) break
+    try {
+      poll = await pollOperation(operationName, token, {
+        projectId,
+        location,
+        model: resolved.model!,
+      })
+      transientFailures = 0
+      if (poll.done) break
+    } catch (e) {
+      // Retry ONLY transient glitches, and only for a bounded burst. Permanent
+      // errors (auth, RAI, invalid operation) rethrow immediately — no point
+      // hammering the API until the 10-minute deadline.
+      if (isTransientPollError(e) && transientFailures < POLL_MAX_TRANSIENT_RETRIES) {
+        transientFailures++
+        // fall through to the sleep + retry below
+      } else {
+        throw e
+      }
+    }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
   }
   if (!poll.done) throw new Error(`generateVideo: polling timed out after ${POLL_TIMEOUT_MS}ms`)
