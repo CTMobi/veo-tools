@@ -318,25 +318,54 @@ async function downloadFromHttps(
             return
           }
           const ws = fs.createWriteStream(tmp)
+          // Content-Length truncation guard: if the server advertised a length, a
+          // body that ends short is a truncated download — we must NOT rename it to
+          // the final path as if it succeeded.
+          const clHeader = res.headers['content-length']
+          const contentLength = clHeader === undefined ? undefined : parseInt(clHeader, 10)
+          let receivedBytes = 0
+          // truncationMessage — non-undefined iff the server advertised a length and
+          // the bytes we received fall short of it. A short body must NOT be renamed
+          // to the final path as a success; surface it as a truncation error.
+          const truncationMessage = (): string | undefined => {
+            if (contentLength === undefined || Number.isNaN(contentLength)) return undefined
+            if (receivedBytes === contentLength) return undefined
+            return `downloadFile: truncated download (received ${receivedBytes} of ${contentLength} bytes) from ${currentUrl.href}`
+          }
           let idle: NodeJS.Timeout
           const armIdle = () => {
             if (idle) clearTimeout(idle)
             idle = setTimeout(() => req.destroy(new Error(`socket idle > ${socketIdleMs}ms`)), socketIdleMs)
           }
           armIdle()
-          res.on('data', () => armIdle())
+          res.on('data', (c: Buffer) => {
+            receivedBytes += c.length
+            armIdle()
+          })
           res.on('error', (e) => {
             clearTimeout(idle)
             ws.destroy()
-            resolve({ kind: 'error', message: String(e) })
+            // A premature close on a length-advertised response (Node surfaces this
+            // as an 'aborted'/error on res) is a truncated download — report it as
+            // such rather than the opaque underlying socket error.
+            resolve({ kind: 'error', message: truncationMessage() ?? String(e) })
           })
           res.pipe(ws)
           ws.on('finish', () => {
             clearTimeout(idle)
+            const truncated = truncationMessage()
+            if (truncated !== undefined) {
+              resolve({ kind: 'error', message: truncated })
+              return
+            }
             resolve({ kind: 'done' })
           })
           ws.on('error', (e) => {
             clearTimeout(idle)
+            // GEM4: the response is still piping into ws; tear down the HTTP request
+            // too so the socket does not leak when the write target fails (mirrors
+            // the res.on('error') path which already destroys via req's idle timer).
+            req.destroy()
             resolve({ kind: 'error', message: String(e) })
           })
         }

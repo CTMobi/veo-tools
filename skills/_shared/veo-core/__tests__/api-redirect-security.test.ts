@@ -170,6 +170,59 @@ describe('downloadFile — socket-idle timeout (belt) and total deadline (suspen
   }, 10_000)
 })
 
+describe('downloadFile — content-length truncation guard (GEM5)', () => {
+  it('rejects when the body is shorter than the advertised Content-Length and leaves no final file', async () => {
+    const server = http.createServer((_req, res) => {
+      // Advertise more bytes than we actually send, then end the response.
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': '1024' })
+      res.end(Buffer.alloc(16, 0x41)) // only 16 of the promised 1024 bytes
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    try {
+      const out = path.join(tmpDir, 'truncated.bin')
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/short`, out, 'tok')
+      ).rejects.toThrow(/truncat/i)
+      expect(fs.existsSync(out)).toBe(false) // no stranded final file
+    } finally {
+      server.closeAllConnections?.()
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  }, 10_000)
+})
+
+describe('downloadFile — write-target failure tears down the request (GEM4)', () => {
+  it('rejects (does not hang) when the write stream cannot be opened', async () => {
+    let served = false
+    const server = http.createServer((_req, res) => {
+      served = true
+      res.writeHead(200, { 'content-type': 'application/octet-stream' })
+      res.end(PAYLOAD)
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+
+    // Make a read-only directory; createWriteStream into it fails with EACCES,
+    // which fires ws.on('error') mid-pipe. The fix req.destroy()s so we don't leak
+    // the socket / hang past the deadline.
+    const roDir = fs.mkdtempSync(path.join(tmpDir, 'ro-'))
+    fs.chmodSync(roDir, 0o500)
+    try {
+      const out = path.join(roDir, 'denied.bin')
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/v.mp4`, out, 'tok', { socketIdleMs: 2000 })
+      ).rejects.toThrow()
+      expect(served).toBe(true)
+      expect(fs.existsSync(out)).toBe(false)
+    } finally {
+      fs.chmodSync(roDir, 0o700)
+      server.closeAllConnections?.()
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  }, 10_000)
+})
+
 describe('api timeout constants are wired', () => {
   it('exports the three documented timeout constants', async () => {
     const api = await import('@veo-core/api')
