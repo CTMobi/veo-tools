@@ -532,7 +532,7 @@ Before generating:
 |----------|--------|----------|------------|-------|-------|
 | Hero background | 16:9 | 4s | 720p | off | Shortest for smoothest loops |
 | Ambient loop | 16:9 | 4s | 720p | off | Minimal motion, locked camera |
-| Product showcase | 16:9 | 8s | 1080p | off | Max duration for full reveal |
+| Product showcase | 16:9 | 8s | 1080p | on | Max duration for full reveal |
 | Marketing clip | 16:9 | 8s | 1080p | on | Chain multiple for longer ads |
 | Social (vertical) | 9:16 | 8s | 1080p | on | Reels/TikTok format |
 | App store preview | 9:16 | 8s | 1080p | off | 15-30s = chain 2-4 clips |
