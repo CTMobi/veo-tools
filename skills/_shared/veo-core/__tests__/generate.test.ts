@@ -14,6 +14,7 @@ vi.mock('@veo-core/api', () => ({
     raw: {},
   })),
   downloadFile: vi.fn(async () => undefined),
+  saveInlineVideo: vi.fn(async () => undefined),
 }))
 
 beforeEach(() => {
@@ -77,5 +78,37 @@ describe('generateVideo', () => {
     await expect(
       generateVideo({ prompt: 'x' } as never) // missing outputPath/storageUri => rule #9
     ).rejects.toThrow(/output destination required/i)
+  })
+
+  it('writes inline base64 video when poll returns videoBytes (REAL default Vertex delivery)', async () => {
+    // Default delivery (no storageUri) returns the video inline as bytesBase64Encoded,
+    // NOT a uri/gcsUri. Verified live against claude-ve 2026-06-17.
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      done: true,
+      videoUrl: undefined,
+      gcsUri: undefined,
+      videoBytes: 'AAECAwQF',
+      mimeType: 'video/mp4',
+      raiFilteredCount: 0,
+      raw: {},
+    })
+    const r = await generateVideo({ prompt: 'a sunset', outputPath: '/tmp/inline.mp4' })
+    expect(r.videoPath).toBe('/tmp/inline.mp4')
+    expect(api.saveInlineVideo).toHaveBeenCalledWith('AAECAwQF', '/tmp/inline.mp4')
+    expect(api.downloadFile).not.toHaveBeenCalled()
+  })
+
+  it('throws a Responsible-AI error when all candidates were filtered (no video)', async () => {
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      done: true,
+      videoUrl: undefined,
+      gcsUri: undefined,
+      videoBytes: undefined,
+      raiFilteredCount: 1,
+      raw: {},
+    })
+    await expect(
+      generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+    ).rejects.toThrow(/responsible ai|filter/i)
   })
 })

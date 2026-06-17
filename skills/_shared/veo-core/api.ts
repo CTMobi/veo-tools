@@ -117,16 +117,31 @@ export async function pollOperation(
   operationName: string,
   token: string,
   opts: { projectId: string; location: string; model: string; apiHost?: string }
-): Promise<{ done: boolean; videoUrl?: string; gcsUri?: string; raw: unknown }> {
+): Promise<{
+  done: boolean
+  videoUrl?: string
+  gcsUri?: string
+  videoBytes?: string
+  mimeType?: string
+  raiFilteredCount?: number
+  raw: unknown
+}> {
   const apiHost = opts.apiHost ?? defaultApiHost(opts.location)
   const url = getOperationEndpoint(apiHost, opts.projectId, opts.location, opts.model)
   const { status, body } = await makeRequest(url, 'POST', token, { operationName })
   if (status < 200 || status >= 300) {
     throw new Error(`pollOperation: HTTP ${status} — ${body.slice(0, ERROR_BODY_CAP)}`)
   }
+  // Real Vertex predictLongRunning shape (verified live 2026-06-17): the DEFAULT
+  // delivery (no storageUri) returns the video inline as videos[0].bytesBase64Encoded
+  // + mimeType — there is NO uri/gcsUri in that case. raiMediaFilteredCount reports
+  // how many candidates the Responsible-AI filter suppressed.
   const parsed = JSON.parse(body) as {
     done?: boolean
-    response?: { videos?: Array<{ gcsUri?: string; bytesBase64Encoded?: string; uri?: string }> }
+    response?: {
+      videos?: Array<{ gcsUri?: string; bytesBase64Encoded?: string; uri?: string; mimeType?: string }>
+      raiMediaFilteredCount?: number
+    }
     error?: { message?: string }
   }
   if (parsed.error?.message) throw new Error(`pollOperation: ${parsed.error.message}`)
@@ -136,7 +151,25 @@ export async function pollOperation(
     done: true,
     videoUrl: v?.uri,
     gcsUri: v?.gcsUri,
+    videoBytes: v?.bytesBase64Encoded,
+    mimeType: v?.mimeType,
+    raiFilteredCount: parsed.response?.raiMediaFilteredCount,
     raw: parsed,
+  }
+}
+
+// saveInlineVideo — write a base64-encoded video (the default predictLongRunning
+// delivery) to outputPath. Uses the same atomic temp+rename discipline as
+// downloadFile so a crash leaves a stranded .tmp, never a truncated final file.
+export async function saveInlineVideo(base64: string, outputPath: string): Promise<void> {
+  const buf = Buffer.from(base64, 'base64')
+  const tmp = `${outputPath}.${crypto.randomBytes(8).toString('hex')}.tmp`
+  try {
+    await fs.promises.writeFile(tmp, buf)
+    await fs.promises.rename(tmp, outputPath)
+  } catch (e) {
+    await fs.promises.unlink(tmp).catch(() => {})
+    throw e
   }
 }
 

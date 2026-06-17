@@ -1,6 +1,6 @@
 // generate.ts — orchestrator: auth -> validate -> submit -> poll -> download/skip.
 import { getAccessToken } from '@veo-core/auth'
-import { submitGeneration, pollOperation, downloadFile } from '@veo-core/api'
+import { submitGeneration, pollOperation, downloadFile, saveInlineVideo } from '@veo-core/api'
 import { validateConfig } from '@veo-core/validation'
 import type { VeoConfig, GenerationResult } from '@veo-core/types'
 
@@ -52,10 +52,25 @@ export async function generateVideo(config: VeoConfig): Promise<GenerationResult
     return result
   }
 
-  // Local download. videoUrl may be https:// or gs:// — downloadFile handles both.
+  // Local delivery. Three real cases, in priority order:
+  //  1. gcsUri / videoUrl  — a fetchable URL (https:// or gs://). downloadFile handles both.
+  //  2. videoBytes         — the DEFAULT: the video is inlined as base64 in the poll
+  //                          response (verified live 2026-06-17). Decode + atomic write.
+  //  3. neither, raiFilteredCount > 0 — every candidate was suppressed by the
+  //                          Responsible-AI filter. Surface a clear, actionable error.
   const target = poll.gcsUri ?? poll.videoUrl
-  if (!target) throw new Error('generateVideo: no download target in poll result')
-  await downloadFile(target, resolved.outputPath!, token)
+  if (target) {
+    await downloadFile(target, resolved.outputPath!, token)
+  } else if (poll.videoBytes) {
+    await saveInlineVideo(poll.videoBytes, resolved.outputPath!)
+  } else if (poll.raiFilteredCount && poll.raiFilteredCount > 0) {
+    throw new Error(
+      `generateVideo: all ${poll.raiFilteredCount} candidate(s) were blocked by the Responsible AI filter. ` +
+        `Revise the prompt (e.g. remove sensitive content), or pass includeRaiReason to surface the specific reason.`
+    )
+  } else {
+    throw new Error('generateVideo: no download target in poll result')
+  }
   result.videoPath = resolved.outputPath
   return result
 }

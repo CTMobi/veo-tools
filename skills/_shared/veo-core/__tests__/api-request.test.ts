@@ -81,6 +81,39 @@ describe('pollOperation', () => {
     expect(r.videoUrl).toBe('https://d/v.mp4')
     expect(r.gcsUri).toBe('gs://b/v.mp4')
   })
+  it('extracts inline bytesBase64Encoded + mimeType when done (REAL default Vertex shape, verified 2026-06-17)', async () => {
+    // The real predictLongRunning response (no storageUri) delivers the video inline:
+    //   response: { "@type": "...GenerateVideoResponse", raiMediaFilteredCount: 0,
+    //               videos: [{ bytesBase64Encoded: "<b64>", mimeType: "video/mp4" }] }
+    // There is NO uri/gcsUri in the default case — captured live against claude-ve.
+    nextResponse = JSON.stringify({
+      done: true,
+      response: {
+        '@type': 'type.googleapis.com/cloud.ai.large_models.vision.GenerateVideoResponse',
+        raiMediaFilteredCount: 0,
+        videos: [{ bytesBase64Encoded: 'AAECAwQF', mimeType: 'video/mp4' }],
+      },
+    })
+    const r = await pollOperation('op/1', 'tok', popts())
+    expect(r.done).toBe(true)
+    expect(r.videoBytes).toBe('AAECAwQF')
+    expect(r.mimeType).toBe('video/mp4')
+    expect(r.videoUrl).toBeUndefined()
+    expect(r.gcsUri).toBeUndefined()
+    expect(r.raiFilteredCount).toBe(0)
+  })
+  it('surfaces raiMediaFilteredCount when the candidate was filtered (no video)', async () => {
+    nextResponse = JSON.stringify({
+      done: true,
+      response: { raiMediaFilteredCount: 1, raiMediaFilteredReasons: ['blocked'], videos: [] },
+    })
+    const r = await pollOperation('op/1', 'tok', popts())
+    expect(r.done).toBe(true)
+    expect(r.raiFilteredCount).toBe(1)
+    expect(r.videoBytes).toBeUndefined()
+    expect(r.videoUrl).toBeUndefined()
+    expect(r.gcsUri).toBeUndefined()
+  })
   it('propagates error.message from the operation', async () => {
     nextResponse = JSON.stringify({ done: true, error: { message: 'quota exceeded' } })
     await expect(pollOperation('op/1', 'tok', popts())).rejects.toThrow(/quota exceeded/)
