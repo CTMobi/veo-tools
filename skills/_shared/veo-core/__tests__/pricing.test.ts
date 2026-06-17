@@ -88,3 +88,19 @@ describe('estimateCost — unknown model throws', () => {
     ).toThrow(/unknown model/i)
   })
 })
+
+describe('estimateCost — unknown resolution throws (fail-fast, consistent with unknown model)', () => {
+  it('throws on an unknown resolution instead of silently defaulting to 1x', () => {
+    expect(() =>
+      estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '8k' as never, durationSeconds: 8, generateAudio: false, sampleCount: 1 })
+    ).toThrow(/unknown resolution/i)
+  })
+})
+
+describe('estimateCost — Veo 2 breakdown never lists audio', () => {
+  it('does not list audio in the breakdown for a Veo 2 config even if generateAudio=true is passed', () => {
+    // Audio is excluded from Veo 2 pricing; the breakdown must reflect that.
+    const r = estimateCost({ ...base, model: 'veo-2.0-generate-001', resolution: '720p', durationSeconds: 8, generateAudio: true, sampleCount: 1 })
+    expect(r.breakdown).not.toContain('audio')
+  })
+})

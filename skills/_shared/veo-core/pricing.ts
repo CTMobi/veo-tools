@@ -45,8 +45,16 @@ export function estimateCost(config: VeoConfig): { usd: number; breakdown: strin
         Object.keys(BASE_USD_PER_SEC).join(', ')
     )
   }
-  const resMult = RESOLUTION_MULTIPLIER[resolution] ?? 1
-  const audioDelta = audio && !model.startsWith('veo-2') ? AUDIO_PER_SEC_DELTA : 0
+  const resMult = RESOLUTION_MULTIPLIER[resolution]
+  if (resMult === undefined) {
+    throw new Error(
+      `estimateCost: unknown resolution '${resolution}' — add it to pricing.ts or use one of: ` +
+        Object.keys(RESOLUTION_MULTIPLIER).join(', ')
+    )
+  }
+  // Audio is only billed on Veo 3.x; Veo 2 ignores it entirely.
+  const audioBilled = audio && !model.startsWith('veo-2')
+  const audioDelta = audioBilled ? AUDIO_PER_SEC_DELTA : 0
 
   // Round per-video cost first, then multiply by sampleCount so that
   // estimateCost({ sampleCount: N }).usd === N * estimateCost({ sampleCount: 1 }).usd
@@ -56,7 +64,7 @@ export function estimateCost(config: VeoConfig): { usd: number; breakdown: strin
 
   const breakdown =
     `${model}, ${duration}s, ${resolution}` +
-    (audio ? ', audio' : '') +
+    (audioBilled ? ', audio' : '') +
     (samples > 1 ? `, x${samples}` : '')
 
   return { usd, breakdown }
