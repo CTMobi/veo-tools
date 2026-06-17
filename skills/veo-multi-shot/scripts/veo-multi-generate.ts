@@ -142,9 +142,11 @@ function validateVisualDNAConsistency(prompts: string[]): {
 
   // Check for consistency
   const firstShot = allExtractions[0]
+  if (!firstShot) return { valid: true, warnings, analysis }
 
   for (let i = 1; i < allExtractions.length; i++) {
     const shot = allExtractions[i]
+    if (!shot) continue
 
     // Check if lighting style is dramatically different
     const firstHasHard = firstShot.lighting.some(l => l.includes('hard'))
@@ -297,9 +299,9 @@ async function generateMultiShot(config: MultiShotConfig): Promise<MultiShotResu
   // Generate each shot
   for (let i = 0; i < config.shots.length; i++) {
     const shotNum = i + 1
-    const prompt = config.shots[i]
-    const duration = config.durations[i] || 6
-    const beatName = beatNames[i]
+    const prompt = config.shots[i] ?? ''
+    const duration = config.durations[i] ?? 6
+    const beatName = beatNames[i] ?? `Shot ${shotNum}`
     const paddedNum = shotNum.toString().padStart(2, '0')
     const outputPath = path.join(projectDir, `shot-${paddedNum}-${beatName.toLowerCase().replace(/\s+/g, '-')}.mp4`)
 
@@ -562,7 +564,7 @@ function parseArgs(args: string[]): MultiShotConfig | null {
         break
 
       case '--transition-duration':
-        config.transitionDuration = parseFloat(next) || 0.5
+        config.transitionDuration = parseFloat(next ?? '') || 0.5
         i++
         break
     }

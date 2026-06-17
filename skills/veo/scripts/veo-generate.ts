@@ -351,13 +351,15 @@ export async function generateVideo(
     let videoUrl: string | undefined
     let videoBase64: string | undefined
 
-    if (generatedVideos && generatedVideos.length > 0 && generatedVideos[0].video?.uri) {
-      videoUrl = generatedVideos[0].video.uri
-    } else if (videos && videos.length > 0) {
-      if (videos[0].gcsUri) {
-        videoUrl = videos[0].gcsUri
-      } else if (videos[0].bytesBase64Encoded) {
-        videoBase64 = videos[0].bytesBase64Encoded
+    const firstGenerated = generatedVideos?.[0]
+    const firstVideo = videos?.[0]
+    if (generatedVideos && generatedVideos.length > 0 && firstGenerated?.video?.uri) {
+      videoUrl = firstGenerated.video.uri
+    } else if (videos && videos.length > 0 && firstVideo) {
+      if (firstVideo.gcsUri) {
+        videoUrl = firstVideo.gcsUri
+      } else if (firstVideo.bytesBase64Encoded) {
+        videoBase64 = firstVideo.bytesBase64Encoded
       }
     }
 
@@ -502,7 +504,7 @@ function parseArgs(args: string[]): { config: VeoConfig; output: string } | null
         break
 
       case '--duration':
-        const dur = parseInt(next, 10)
+        const dur = parseInt(next ?? '', 10)
         if (dur === 4 || dur === 6 || dur === 8) {
           config.durationSeconds = dur
         }
@@ -528,12 +530,12 @@ function parseArgs(args: string[]): { config: VeoConfig; output: string } | null
         break
 
       case '--seed':
-        config.seed = parseInt(next, 10)
+        config.seed = parseInt(next ?? '', 10)
         i++
         break
 
       case '--samples':
-        const samples = parseInt(next, 10)
+        const samples = parseInt(next ?? '', 10)
         if (samples >= 1 && samples <= 4) {
           config.sampleCount = samples
         }

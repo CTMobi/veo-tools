@@ -8,15 +8,15 @@ describe('MODEL_SUGGESTIONS', () => {
     }
   })
   it('hero-background/ambient/loop include a lite entry', () => {
-    expect(MODEL_SUGGESTIONS['hero-background'].lite).toBe('veo-3.1-lite-generate-001')
-    expect(MODEL_SUGGESTIONS['ambient'].lite).toBe('veo-3.1-lite-generate-001')
-    expect(MODEL_SUGGESTIONS['loop'].lite).toBe('veo-3.1-lite-generate-001')
+    expect(MODEL_SUGGESTIONS['hero-background']!.lite).toBe('veo-3.1-lite-generate-001')
+    expect(MODEL_SUGGESTIONS['ambient']!.lite).toBe('veo-3.1-lite-generate-001')
+    expect(MODEL_SUGGESTIONS['loop']!.lite).toBe('veo-3.1-lite-generate-001')
   })
   it('social/marketing/product/storytelling omit lite', () => {
-    expect(MODEL_SUGGESTIONS['social'].lite).toBeUndefined()
-    expect(MODEL_SUGGESTIONS['marketing'].lite).toBeUndefined()
-    expect(MODEL_SUGGESTIONS['product'].lite).toBeUndefined()
-    expect(MODEL_SUGGESTIONS['storytelling'].lite).toBeUndefined()
+    expect(MODEL_SUGGESTIONS['social']!.lite).toBeUndefined()
+    expect(MODEL_SUGGESTIONS['marketing']!.lite).toBeUndefined()
+    expect(MODEL_SUGGESTIONS['product']!.lite).toBeUndefined()
+    expect(MODEL_SUGGESTIONS['storytelling']!.lite).toBeUndefined()
   })
   it('unknown use case fallback has no lite', () => {
     _resetDefaultModelCacheForTests()
