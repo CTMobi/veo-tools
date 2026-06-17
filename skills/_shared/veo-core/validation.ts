@@ -16,9 +16,49 @@ import {
   resolveDefaultModel,
 } from '@veo-core/constants'
 
-// ---------- token estimator (Latin-script approx; future round may add multipliers) ----------
+// ---------- token estimator (per-script weighted; spec Open Question #2) ----------
+// Each code point is classified into a script bucket and divided by that script's
+// chars-per-token ratio; the per-script contributions are summed and ceil'd:
+//   estimated = ceil( Σ chars_in_script / ratio_for_script )
+// A *smaller* ratio means *more* tokens per char (e.g. CJK 0.5 => 2 tokens/char).
+// Code points outside the listed ranges (incl. plain symbols/punctuation) are
+// treated as Latin (ratio 3.5). Iterating with for..of walks code points, so
+// surrogate-pair emoji are counted once, not twice. See spec §"Token counting".
+function ratioForCodePoint(cp: number): number {
+  // Emoji / pictographs (checked first; some overlap nothing else)
+  if (
+    (cp >= 0x1f300 && cp <= 0x1f5ff) || // Misc Symbols & Pictographs
+    (cp >= 0x1f600 && cp <= 0x1f64f) || // Emoticons
+    (cp >= 0x1f900 && cp <= 0x1f9ff) || // Supplemental Symbols & Pictographs
+    (cp >= 0x1f680 && cp <= 0x1f6ff) || // Transport & Map
+    (cp >= 0x2600 && cp <= 0x26ff) ||   // Misc Symbols
+    (cp >= 0x2700 && cp <= 0x27bf)      // Dingbats
+  ) {
+    return 0.4
+  }
+  // CJK incl. symbols/punctuation and fullwidth/halfwidth forms
+  if (
+    (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
+    (cp >= 0x3040 && cp <= 0x30ff) || // Hiragana + Katakana
+    (cp >= 0xac00 && cp <= 0xd7af) || // Hangul Syllables
+    (cp >= 0x3000 && cp <= 0x303f) || // CJK Symbols & Punctuation
+    (cp >= 0xff00 && cp <= 0xffef)    // Halfwidth & Fullwidth Forms
+  ) {
+    return 0.5
+  }
+  if (cp >= 0x0400 && cp <= 0x04ff) return 2.0 // Cyrillic
+  if (cp >= 0x0600 && cp <= 0x06ff) return 2.0 // Arabic
+  if (cp >= 0x0590 && cp <= 0x05ff) return 2.0 // Hebrew
+  if (cp >= 0x0900 && cp <= 0x097f) return 1.8 // Devanagari
+  return 3.5 // Latin (default) — also covers plain symbols/punctuation
+}
+
 function estimateTokens(s: string): number {
-  return Math.ceil(s.length / 3.5)
+  let total = 0
+  for (const ch of s) {
+    total += 1 / ratioForCodePoint(ch.codePointAt(0)!)
+  }
+  return Math.ceil(total)
 }
 
 // ---------- FOUNDATION_RULES ----------

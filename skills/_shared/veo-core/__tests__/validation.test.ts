@@ -113,6 +113,30 @@ describe('Rule #5 — token soft warning, never rejects', () => {
     expect(r.valid).toBe(true)
     if (r.valid) expect(r.warnings.some((w) => /token/i.test(w))).toBe(true)
   })
+
+  // GEM6 — per-script weighted estimator. Non-Latin scripts pack far more tokens
+  // per char than the Latin 3.5 ratio assumes, so a length/3.5 estimate would
+  // under-count and miss the warning the weighted estimator must fire.
+  it('CJK-heavy prompt warns where length/3.5 would not', () => {
+    // 2000 CJK chars. length/3.5 ≈ 572 tokens (< 900, no warning).
+    // Weighted (ratio 0.5) ≈ 4000 tokens (>> 900, warning).
+    const cjk = '猫'.repeat(2000)
+    expect(Math.ceil(cjk.length / 3.5)).toBeLessThan(900) // simple estimator misses it
+    const r = validateConfig(ok({ prompt: cjk }))
+    expect(r.valid).toBe(true)
+    if (r.valid) expect(r.warnings.some((w) => /token/i.test(w))).toBe(true)
+  })
+
+  it('emoji-heavy prompt warns where length/3.5 would not', () => {
+    // 1000 emoji code points. String .length counts each as 2 UTF-16 units
+    // (surrogate pair) => 2000; length/3.5 ≈ 572 tokens (< 900, no warning).
+    // Weighted (ratio 0.4 per code point) ≈ 2500 tokens (>> 900, warning).
+    const emoji = '😀'.repeat(1000)
+    expect(Math.ceil(emoji.length / 3.5)).toBeLessThan(900) // simple estimator misses it
+    const r = validateConfig(ok({ prompt: emoji }))
+    expect(r.valid).toBe(true)
+    if (r.valid) expect(r.warnings.some((w) => /token/i.test(w))).toBe(true)
+  })
 })
 
 describe('Rule #6 — personGeneration regional', () => {
