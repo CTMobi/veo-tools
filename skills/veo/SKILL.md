@@ -169,8 +169,11 @@ Shall I generate?
 > by `estimateCost(v.autoFixed)` and already includes the breakdown
 > (model, duration, resolution, audio, sampleCount multiplier). Substitute that number
 > for `~$X.XX`. Never hand-estimate the cost. The CLI `--dry-run` output is the abbreviated
-> machine form; the PRESENT block above is the conversational form — they carry the same
-> resolved settings, auto-adjustments, warnings, and the same estimateCost() number.
+> machine form: it echoes only model, resolution, duration, audio, auto-adjustments,
+> warnings, and the estimateCost() number. The PRESENT block above is the fuller
+> conversational form — you supply the remaining resolved fields (negative prompt,
+> person generation, seed, watermark) from the config you passed to `veo-generate`.
+> Both carry the same auto-adjustments, warnings, and the same estimateCost() number.
 
 If validation fails, present the errors from `validateConfig()`, suggest fixes, fix the config, and re-run `--dry-run` before presenting again.
 
