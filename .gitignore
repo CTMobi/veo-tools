@@ -21,3 +21,7 @@ node_modules/
 # Credentials (never commit these!)
 *-service-account.json
 credentials.json
+
+node_modules/
+coverage/
+*.tmp
