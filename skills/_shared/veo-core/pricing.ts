@@ -51,6 +51,17 @@ export function estimateCost(config: VeoConfig): { usd: number; breakdown: strin
         Object.keys(BASE_USD_PER_SEC).join(', ')
     )
   }
+  // Defensive numeric guards: validateConfig runs first in the normal flow, but
+  // estimateCost is exported/public and could be called with a raw config. A
+  // non-positive or non-integer duration/sampleCount would otherwise produce a
+  // nonsensical price silently.
+  if (!Number.isInteger(duration) || duration <= 0) {
+    throw new Error(`estimateCost: durationSeconds must be a positive integer; got ${duration}`)
+  }
+  if (!Number.isInteger(samples) || samples <= 0) {
+    throw new Error(`estimateCost: sampleCount must be a positive integer; got ${samples}`)
+  }
+
   const resMult = RESOLUTION_MULTIPLIER[resolution]
   if (resMult === undefined) {
     throw new Error(

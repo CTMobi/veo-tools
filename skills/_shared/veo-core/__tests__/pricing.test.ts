@@ -114,3 +114,21 @@ describe('estimateCost — Veo 2 breakdown never lists audio', () => {
     expect(r.breakdown).not.toContain('audio')
   })
 })
+
+describe('estimateCost — defensive numeric guards (CR-B)', () => {
+  it('throws on durationSeconds=0', () => {
+    expect(() =>
+      estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: 0, generateAudio: false, sampleCount: 1 })
+    ).toThrow(/durationSeconds must be a positive integer/i)
+  })
+  it('throws on a negative durationSeconds', () => {
+    expect(() =>
+      estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: -8, generateAudio: false, sampleCount: 1 })
+    ).toThrow(/durationSeconds must be a positive integer/i)
+  })
+  it('throws on sampleCount=0', () => {
+    expect(() =>
+      estimateCost({ ...base, model: 'veo-3.1-generate-001', resolution: '720p', durationSeconds: 8, generateAudio: false, sampleCount: 0 })
+    ).toThrow(/sampleCount must be a positive integer/i)
+  })
+})
