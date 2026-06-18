@@ -17,7 +17,7 @@ All notable changes to `veo-tools` are documented here. Format: [Keep a Changelo
 - `audio-lexicon.md` reference.
 - 4K resolution support (Veo 3.x).
 - `addWatermark` and `includeRaiReason` pass-through parameters (Vertex AI defaults preserved).
-- CI workflow (`npm ci && npm test`) on PRs to `main`.
+- CI workflow (`npm ci` + `npm run typecheck` + `npm test`) on PRs to `main`.
 
 ### Changed
 - Auth: `google-auth-library` replaces `gcloud auth print-access-token` shell-out.
