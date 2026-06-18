@@ -160,7 +160,7 @@ describe('runDryRun', () => {
     log.mockRestore(); err.mockRestore(); exit.mockRestore()
   })
 
-  it('exits 2 before touching shot 2 when shot 1 fails validation', () => {
+  it('processes a valid shot 0 then stops at the first invalid shot (shot 1)', () => {
     const errs: string[] = []
     const err = vi.spyOn(console, 'error').mockImplementation((s: unknown) => { errs.push(String(s)) })
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -169,12 +169,15 @@ describe('runDryRun', () => {
     }) as never)
     const sb = {
       shots: [
-        { prompt: 'a' } as never, // missing outputPath/storageUri → rule #9 fails
-        { prompt: 'b', outputPath: '/tmp/b.mp4' },
+        { prompt: 'a', outputPath: '/tmp/a.mp4' },   // valid → processed
+        { prompt: 'b' } as never,                     // missing output dest → rule #9 fails
       ],
     }
     expect(() => runDryRun(sb)).toThrow(/exit:2/)
-    expect(errs.some((s) => /shot 0/.test(s))).toBe(true)
+    // The error must reference shot 1 (index 1) — proving validation proceeded past
+    // shot 0 and stopped at the first invalid shot, not shot 0.
+    expect(errs.some((s) => /shot 1/.test(s))).toBe(true)
+    expect(errs.some((s) => /shot 0/.test(s))).toBe(false)
     log.mockRestore(); err.mockRestore(); exit.mockRestore()
   })
 })
