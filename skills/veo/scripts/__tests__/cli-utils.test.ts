@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { parseArgs, buildConfig } from '../cli-utils'
+import { validateConfig } from '@veo-core/validation'
 
 describe('parseArgs', () => {
   it('rejects unknown flags with exit code 2', () => {
@@ -43,8 +44,12 @@ describe('buildConfig', () => {
   it('rejects non-integer --duration (4abc) as NaN so validateConfig fails it, not silent 4 (CR-E)', () => {
     // parseInt would yield 4 from '4abc'; parseIntStrict yields NaN. validateConfig's
     // rule #1 (MODEL_DURATIONS.has(NaN) === false) then rejects it.
-    const cfg = buildConfig({ '--prompt': 'x', '--duration': '4abc' })
+    const cfg = buildConfig({ '--prompt': 'x', '--output': '/tmp/x.mp4', '--duration': '4abc' })
     expect(Number.isNaN(cfg.durationSeconds)).toBe(true)
+    // End-to-end: the NaN must actually be rejected by validateConfig (rule #1),
+    // not merely produced at the buildConfig layer — locks the full chain the
+    // comment claims.
+    expect(validateConfig(cfg).valid).toBe(false)
   })
   it('rejects non-integer --sample-count and --seed as NaN (CR-E)', () => {
     expect(Number.isNaN(buildConfig({ '--prompt': 'x', '--sample-count': '2x' }).sampleCount)).toBe(true)
