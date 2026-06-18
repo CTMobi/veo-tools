@@ -1,6 +1,6 @@
 # Veo - AI Video Generation Skills for Claude Code
 
-Generate cinematic video content using Google Veo 3.1 via Vertex AI. Produce single-shot clips (hero backgrounds, marketing materials, ambient looping visuals) with the `veo` skill, and cohesive multi-clip narrative videos (18-60s, marketing/brand stories/product launches) with the `veo-multi-shot` skill.
+Generate cinematic video content using Google Veo on Vertex AI — Veo 3.1 by default, with the older Veo 3.0/2.0 models selectable via `--model`. Produce single-shot clips (hero backgrounds, marketing materials, ambient looping visuals) with the `veo` skill, and cohesive multi-clip narrative videos (18-60s, marketing/brand stories/product launches) with the `veo-multi-shot` skill.
 
 This is the **2.0.0 "Foundation"** release. The skills are now built on a shared `@veo-core/*` TypeScript library that handles authentication, configuration validation, cost estimation, and generation. See [`docs/releases/2.0.0.md`](docs/releases/2.0.0.md) and [`CHANGELOG.md`](CHANGELOG.md) for the full release notes — including the breaking `generateVideo(config)` signature change and the new context-aware audio default (see [Breaking changes](#breaking-changes-in-200)).
 
