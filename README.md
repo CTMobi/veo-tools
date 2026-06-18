@@ -48,7 +48,7 @@ A 4-shot promotional video assembled from individually generated clips using `/v
 
 ### Option 2: Manual Copy
 
-This is now an npm project: the skills import from a shared `@veo-core/*` library that is resolved at runtime by `skills/_shared/veo-core/bootstrap.ts`, which walks up the tree to find the repo root (marked by `.claude-plugin/plugin.json`) and registers the `@veo-core/*` path mapping from `tsconfig.json`. The library also needs the root runtime dependencies (`google-auth-library`, `@google-cloud/storage`, `tsconfig-paths`).
+This is now an npm project: the skills import from a shared `@veo-core/*` library that is resolved at runtime by `skills/_shared/veo-core/bootstrap.ts`, which walks up the tree to find the repo root (marked by `.claude-plugin/plugin.json`) and registers the `@veo-core/*` → `skills/_shared/veo-core/*` path mapping at runtime. The mapping is hardcoded in `bootstrap.ts` (via `tsconfig-paths`); `tsconfig.json` carries the same alias only for the TypeScript compiler, and is not read at runtime. The library also needs the root runtime dependencies (`google-auth-library`, `@google-cloud/storage`, `tsconfig-paths`).
 
 Because of this, you must install the **whole repository** — not just `skills/*` — and run `npm install` at the repo root before any script runs:
 
@@ -61,7 +61,7 @@ cd veo-tools
 npm install
 ```
 
-To install the skills into Claude Code, point Claude Code at this checkout, or copy the whole repo (at minimum: `skills/`, `.claude-plugin/plugin.json`, root `package.json`, and `tsconfig.json`) into your skills location and run `npm install` at its root. Copying `skills/*` alone will break at runtime: `bootstrap.ts` throws `could not locate repo root` when `.claude-plugin/plugin.json` is missing, and the `@veo-core` dependencies are absent.
+To install the skills into Claude Code, the cleanest path is **Option 1** above (`/plugin marketplace add`) — it avoids manual path issues entirely. If you do install manually, point Claude Code at this checkout (after `npm install`); do **not** copy the repo folder *into* your skills directory, which nests the skills under an extra level so Claude Code can't discover them, and do **not** copy `skills/*` alone — that breaks at runtime: `bootstrap.ts` throws `could not locate repo root` when `.claude-plugin/plugin.json` is missing, and the `@veo-core` dependencies are absent.
 
 ## Skills Included
 
@@ -78,12 +78,13 @@ To install the skills into Claude Code, point Claude Code at this checkout, or c
 
 The `/veo` skill follows a **6-phase workflow** designed to prevent bad prompts and invalid configs from reaching expensive API calls:
 
-```
+```text
 User Request → UNDERSTAND → CRAFT → VALIDATE → PRESENT → GENERATE → ITERATE
 ```
 
 ### Phase 1: UNDERSTAND
 Claude gathers context before crafting any prompt:
+
 - **USE CASE**: `hero-background` | `marketing` | `social` | `product` | `ambient` | `loop` | `storytelling`
 - **MOOD** and visual direction
 - **TECHNICAL REQUIREMENTS**: aspect ratio, duration, resolution
@@ -95,7 +96,7 @@ The use case also drives **context-aware defaults** (see `skills/_shared/veo-cor
 
 ### Phase 2: CRAFT
 Claude builds the prompt using the **5-Element Formula**:
-```
+```text
 [Cinematography] + [Subject] + [Action] + [Context] + [Style & Ambiance]
 ```
 
@@ -109,7 +110,7 @@ Two layers of checks:
 ### Phase 4: PRESENT & AWAIT APPROVAL
 Claude presents the resolved config with validation status and **waits for your approval** before generating. The block surfaces the resolved model, audio (with reason), person generation, negative prompt, any auto-adjustments, validation warnings, and a real cost estimate computed by `estimateCost()` via `--dry-run` — never hand-estimated:
 
-```
+```text
 READY FOR REVIEW:
 
 Prompt: [crafted prompt]
@@ -153,7 +154,7 @@ If results don't match expectations, Claude guides targeted improvements rather 
 
 Use the `veo-setup` skill to configure everything:
 
-```
+```text
 Set up Google Cloud for Veo video generation
 ```
 
@@ -169,21 +170,21 @@ Claude will walk you through:
 
 Once configured, use the `veo` skill:
 
-```
+```text
 Generate a hero background video for a tech startup landing page
 ```
 
-```
+```text
 Create a looping ambient video of abstract particles for my SaaS website
 ```
 
-```
+```text
 Make a 4-second seamless loop of morning mist over a lake
 ```
 
 For longer narrative content, use the `veo-multi-shot` skill:
 
-```
+```text
 Create a 30-second product launch video for our new app
 ```
 
@@ -191,7 +192,7 @@ Create a 30-second product launch video for our new app
 
 Use the `video-loop` skill to convert any video into a seamless infinite loop:
 
-```
+```text
 Create a seamless loop from hero-background.mp4
 ```
 
@@ -273,8 +274,9 @@ Authentication goes through `google-auth-library`, which supports multiple crede
 echo $GOOGLE_CLOUD_PROJECT
 echo $GOOGLE_APPLICATION_CREDENTIALS
 
-# Verify credentials file exists
-ls -la $GOOGLE_APPLICATION_CREDENTIALS
+# Verify the credentials file exists (only when using a service-account key;
+# skip if you rely on ADC or Workload Identity, where this var is unset)
+[ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] && ls -la "$GOOGLE_APPLICATION_CREDENTIALS"
 
 # Run a no-cost validation + cost preview (does not call the generation API)
 npx ts-node skills/veo/scripts/veo-generate.ts --prompt "test" --output ./test.mp4 --dry-run
@@ -307,8 +309,8 @@ The script is a thin entry point that requires `bootstrap.ts` (to register `@veo
 | `--aspect-ratio` | `16:9`, `9:16` | `16:9` | Video aspect ratio |
 | `--duration` | Veo 3.x: `4`/`6`/`8`; Veo 2: `5`/`6`/`8` | `8` | Seconds. `1080p`/`4k` force duration `8` |
 | `--resolution` | `720p`, `1080p`, `4k` | `720p` | Veo 2 caps at `720p`; Veo 3.1 Lite caps at `1080p` |
-| `--audio` | flag | context-aware | Force audio **on** |
-| `--no-audio` | flag | context-aware | Force audio **off** |
+| `--audio` | flag | model-based | Force audio **on** (overrides the default) |
+| `--no-audio` | flag | model-based | Force audio **off** (overrides the default) |
 | `--sample-count` | `1`–`MODEL_SAMPLE_MAX` | `1` | Max 4 (Veo 3.x) / 2 (Veo 2). Bills N videos; only the first is retrieved |
 | `--seed` | integer `0`–`2147483647` | random | Best-effort determinism on Veo 3 |
 | `--negative-prompt` | string | — | Exclude content matching this phrase (list of unwanted elements) |
@@ -320,9 +322,10 @@ The script is a thin entry point that requires `bootstrap.ts` (to register `@veo
 | `--include-rai-reason` | flag | — | Include Responsible-AI block reason in error responses |
 | `--dry-run` | flag | — | Validate + estimate cost only; do not call the API |
 
-> **Audio default is context-aware (a 2.0.0 breaking change).** The library default for `generateAudio` is **on** for Veo 3.x and **off** for Veo 2. The `veo` skill further applies use-case defaults (off for `hero-background`/`ambient`/`loop`, on for `social`/`marketing`/`product`/`storytelling`). Use `--no-audio` to force off.
+> **Audio default (a 2.0.0 breaking change).** At the CLI/library level the `generateAudio` default is **model-based**: on for Veo 3.x, off for Veo 2 (set by `validateConfig` when neither flag is passed). The `/veo` skill adds a use-case layer on top in its Phase 1 workflow — off for `hero-background`/`ambient`/`loop`, on for `social`/`marketing`/`product`/`storytelling` — by choosing which flag to pass; the CLI itself does not infer the use case. Use `--audio` / `--no-audio` to force it.
 
 **Models** (`AVAILABLE_MODELS`):
+
 - `veo-3.1-generate-001` — GA, higher quality (**default**)
 - `veo-3.1-fast-generate-001` — GA, faster generation
 - `veo-3.1-lite-generate-001` — preview; caps at 1080p
@@ -380,6 +383,7 @@ gcloud services enable aiplatform.googleapis.com
 ### "no access token" / credentials errors
 
 The error `google-auth-library returned no access token. Check GOOGLE_APPLICATION_CREDENTIALS / ADC.` means no usable credential source was found. Confirm one of the following:
+
 - `GOOGLE_APPLICATION_CREDENTIALS` points at a valid service-account key file, or
 - ADC is configured (`gcloud auth application-default login`), or
 - Workload Identity is available in your runtime.
@@ -408,7 +412,7 @@ Full migration guide: [`docs/releases/2.0.0.md`](docs/releases/2.0.0.md).
 
 ## Repository Structure
 
-```
+```text
 veo-tools/
 ├── .claude-plugin/
 │   ├── marketplace.json          # Plugin marketplace metadata
