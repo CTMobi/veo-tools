@@ -4,14 +4,24 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
+# Push ravvicinati sulla stessa PR annullano la review precedente: evita run
+# in race sul commento track_progress e quota sprecata (utile con synchronize).
+concurrency:
+  group: claude-code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude-review:
-    # Solo team interno: salta i fork esterni (dove la review piena non
-    # funzionerebbe per via del GITHUB_TOKEN read-only) e protegge la quota.
+    # Solo team interno E solo PR dallo STESSO repo: sui fork esterni il
+    # workflow `pull_request` non riceve i secret e il GITHUB_TOKEN è
+    # read-only, quindi il job fallirebbe. NB: non usiamo `head.repo.fork`
+    # perché questo repo è esso stesso un fork (sarebbe sempre true); il
+    # confronto sul full_name distingue le PR interne da quelle da fork.
     if: |
-      github.event.pull_request.author_association == 'OWNER' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.author_association == 'COLLABORATOR'
+      (github.event.pull_request.author_association == 'OWNER' ||
+       github.event.pull_request.author_association == 'MEMBER' ||
+       github.event.pull_request.author_association == 'COLLABORATOR') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,11 +33,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          persist-credentials: false   # il job commenta soltanto, non fa push git
 
       - name: Run Claude Code Review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Rende effettivo il permesso job-level `actions: read`: senza questo
+          # input Claude non può leggere i risultati CI della PR.
+          additional_permissions: |
+            actions: read
 
           # Commento con checklist di avanzamento che si aggiorna durante la review
           track_progress: true
