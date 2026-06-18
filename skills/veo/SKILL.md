@@ -424,7 +424,7 @@ npx ts-node scripts/veo-generate.ts \
 | `model` | see `constants.ts` `AVAILABLE_MODELS` | `veo-3.1-generate-001` | Use fast/lite variants for iteration; use-case table above gives per-use-case guidance |
 | `aspectRatio` | `16:9`, `9:16` | `16:9` | 9:16 for vertical/mobile |
 | `durationSeconds` | `4`, `6`, `8` | `8` | API only supports these values (Veo 2: `5`, `6`, `8`) |
-| `resolution` | `720p`, `1080p`, `4k` | `720p` | `4k` requires `--duration 8`; not available on Veo 2 |
+| `resolution` | `720p`, `1080p`, `4k` | `720p` | `4k` requires `--duration 8`; not available on Veo 2 (720p max) or Veo 3.1 Lite (1080p max) |
 | `generateAudio` | `true`, `false` | `true` (Veo 3.x); forced `false` on Veo 2 | Use-case defaults override this — see use-case table above |
 | `sampleCount` | `1-4` (Veo 3); `1-2` (Veo 2) | `1` | Multiple variations |
 | `seed` | integer 0–2147483647 | random | Best-effort on Veo 3 |
@@ -466,15 +466,14 @@ For marketing videos, ads, or content requiring more than 8 seconds:
 ### Async Workflow
 Video generation takes 2-4 minutes. The script:
 1. Submits generation request
-2. Returns operation ID immediately
-3. Polls for completion
-4. Downloads video to output path
-5. Reports success with file path
+2. Blocks and polls the operation to completion, then returns a GenerationResult
+3. Downloads video to output path
+4. Reports success with file path
 
 ### Error Handling
 - **Safety filter**: Prompt modification suggestions provided
-- **Timeout**: Default 5 minutes, configurable
-- **Rate limits**: Automatic exponential backoff
+- **Timeout**: 10-minute poll timeout (not configurable)
+- **Rate limits**: Fixed 5s poll interval; transient errors (high load / 5xx / network) retried up to 5 consecutive times, permanent errors fail fast
 
 ---
 
