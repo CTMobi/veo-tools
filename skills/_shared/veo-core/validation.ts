@@ -10,6 +10,8 @@ import type {
 import {
   MODEL_DURATIONS,
   MODEL_SAMPLE_MAX,
+  MODEL_MAX_RESOLUTION,
+  RESOLUTION_RANK,
   TOKEN_WARNING_THRESHOLD,
   RESTRICTED_PERSON_REGIONS,
   detectRegion,
@@ -271,6 +273,29 @@ const ruleResolutionEnum: ValidationRule = (c) => {
   return { kind: 'ok' }
 }
 
+// #15 — per-model max resolution. The model table caps some models below 4k (Lite at
+// 1080p, Veo 2 at 720p); without this rule a too-high resolution passes validation,
+// gets priced at the higher multiplier, and is rejected by the API later. Compares the
+// requested resolution against the model's cap via RESOLUTION_RANK. Guards undefined
+// resolution/model and unknown values (RESOLUTION_RANK lookups). Overlaps rule #4 for
+// Veo 2 (both fire on e.g. 1080p Veo 2 — harmless, errors aggregate).
+const ruleResolutionPerModel: ValidationRule = (c) => {
+  if (c.resolution === undefined || c.model === undefined) return { kind: 'ok' }
+  const cap = MODEL_MAX_RESOLUTION[c.model]
+  if (cap === undefined) return { kind: 'ok' } // model has no sub-4k cap
+  const reqRank = RESOLUTION_RANK[c.resolution]
+  const capRank = RESOLUTION_RANK[cap]
+  if (reqRank === undefined || capRank === undefined) return { kind: 'ok' } // unknown value; rule #14 owns enum
+  if (reqRank > capRank) {
+    return {
+      kind: 'error',
+      message: `resolution ${c.resolution} exceeds ${c.model} max ${cap}`,
+      suggestion: `drop --resolution (defaults to 720p) or set it to ${cap} or lower`,
+    }
+  }
+  return { kind: 'ok' }
+}
+
 export const FOUNDATION_RULES: ValidationRule[] = [
   ruleDurationsPerModel,              // #1
   ruleHighResRequiresDuration8,       // #2
@@ -286,6 +311,7 @@ export const FOUNDATION_RULES: ValidationRule[] = [
   ruleSeedRange,                      // #12
   rulePersonGenerationEnum,           // #13
   ruleResolutionEnum,                 // #14
+  ruleResolutionPerModel,             // #15
 ]
 
 // ---------- factory ----------

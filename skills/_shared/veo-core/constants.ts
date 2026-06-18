@@ -33,6 +33,21 @@ export const MODEL_SAMPLE_MAX: Readonly<Record<string, number>> = Object.freeze(
   'veo-2.0-generate-001':      2,
 })
 
+// Per-model max output resolution. Only models that cap BELOW 4k need an entry; the
+// standard/fast Veo 3.x models support 4k and are intentionally omitted (no cap).
+// Source: Vertex AI Veo model table (Lite previews at 1080p; Veo 2 at 720p).
+export const MODEL_MAX_RESOLUTION: Readonly<Record<string, string>> = Object.freeze({
+  'veo-3.1-lite-generate-001': '1080p',
+  'veo-2.0-generate-001':      '720p',
+})
+
+// Resolution rank: lower index = lower resolution. Used to compare against a model cap.
+export const RESOLUTION_RANK: Readonly<Record<string, number>> = Object.freeze({
+  '720p':  0,
+  '1080p': 1,
+  '4k':    2,
+})
+
 export const AUDIO_DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'hero-background': false,
   ambient:           false,

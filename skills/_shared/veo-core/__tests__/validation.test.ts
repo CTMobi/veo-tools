@@ -253,6 +253,22 @@ describe('Rule #14 — resolution enum', () => {
   })
 })
 
+describe('Rule #15 — per-model max resolution', () => {
+  it('4k + Lite => error (Lite caps at 1080p)', () => {
+    const r = validateConfig(ok({ resolution: '4k', model: 'veo-3.1-lite-generate-001', durationSeconds: 8 }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/resolution 4k exceeds veo-3\.1-lite-generate-001 max 1080p/)
+  })
+  it('1080p + Lite => ok (at the cap)', () => {
+    const r = validateConfig(ok({ resolution: '1080p', model: 'veo-3.1-lite-generate-001', durationSeconds: 8 }))
+    expect(r.valid).toBe(true)
+  })
+  it('4k + veo-3.1-generate-001 => ok (standard model has no sub-4k cap)', () => {
+    const r = validateConfig(ok({ resolution: '4k', model: 'veo-3.1-generate-001', durationSeconds: 8 }))
+    expect(r.valid).toBe(true)
+  })
+})
+
 describe('validateConfig — internal ordering invariant', () => {
   it('step 1 resolves default model before any rule sees the config', () => {
     const seen: Array<string | undefined> = []
