@@ -107,6 +107,18 @@ describe('downloadFile — URL scheme handling', () => {
       downloadFile('ftp://example.com/file', path.join(tmpDir, 'f.bin'), 'fake-token')
     ).rejects.toThrow(/scheme|protocol|http|gs:/i)
   })
+
+  it('rejects gs:// with an empty bucket (gs:///obj) before any SDK call (CR-A)', async () => {
+    await expect(
+      downloadFile('gs:///obj', path.join(tmpDir, 'f.bin'), 'fake-token')
+    ).rejects.toThrow(/empty bucket or object/i)
+  })
+
+  it('rejects gs:// with an empty object (gs://bucket/) before any SDK call (CR-A)', async () => {
+    await expect(
+      downloadFile('gs://bucket/', path.join(tmpDir, 'f.bin'), 'fake-token')
+    ).rejects.toThrow(/empty bucket or object/i)
+  })
 })
 
 describe('saveInlineVideo — default inline base64 delivery', () => {

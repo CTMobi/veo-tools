@@ -193,7 +193,7 @@ export async function saveInlineVideo(base64: string, outputPath: string): Promi
   }
 }
 
-// downloadFile — HTTPS + gs:// dual scheme. Atomic write to randomly-suffixed .tmp then rename.
+// downloadFile — http/https URL + gs:// dual scheme. Atomic write to randomly-suffixed .tmp then rename.
 // opts.socketIdleMs overrides the idle watchdog (tests shorten it; production omits).
 export async function downloadFile(
   target: string,
@@ -237,6 +237,11 @@ async function downloadFromGcs(gcsUri: string, outputPath: string): Promise<void
   if (slash === -1) throw new Error(`Malformed gs:// URI: ${gcsUri}`)
   const bucket = rest.slice(0, slash)
   const object = rest.slice(slash + 1)
+  // Reject empty bucket ('gs:///obj') or empty object ('gs://bucket/') explicitly
+  // rather than deferring an opaque failure to the GCS SDK on the network call.
+  if (bucket === '' || object === '') {
+    throw new Error(`Malformed gs:// URI: ${gcsUri} (empty bucket or object)`)
+  }
   const storage = new Storage()
   try {
     await storage.bucket(bucket).file(object).download({ destination: tmp })
