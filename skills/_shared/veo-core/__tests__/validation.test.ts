@@ -235,6 +235,24 @@ describe('Rule #13 — personGeneration enum', () => {
   })
 })
 
+describe('Rule #14 — resolution enum', () => {
+  it("resolution='8k' => error", () => {
+    const r = validateConfig(ok({ resolution: '8k' as unknown as '720p' }))
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/Invalid resolution: 8k \(allowed: 720p, 1080p, 4k\)/)
+  })
+  it('the three valid values => no enum error', () => {
+    // 720p is unconstrained; 1080p/4k auto-fix duration to 8 (rule #2) but stay valid.
+    for (const v of ['720p', '1080p', '4k'] as const) {
+      const r = validateConfig(ok({ resolution: v }))
+      expect(r.valid).toBe(true)
+    }
+  })
+  it('resolution undefined => valid (no rule applies)', () => {
+    expect(validateConfig(ok()).valid).toBe(true)
+  })
+})
+
 describe('validateConfig — internal ordering invariant', () => {
   it('step 1 resolves default model before any rule sees the config', () => {
     const seen: Array<string | undefined> = []

@@ -256,6 +256,21 @@ const rulePersonGenerationEnum: ValidationRule = (c) => {
   return { kind: 'ok' }
 }
 
+// #14 — resolution enum. Allowed: 720p | 1080p | 4k. undefined => ok (default
+// applied later). Rules #2 (1080p/4k require duration 8) and #4 (Veo 2 max 720p)
+// already read resolution but don't validate the enum; this closes that gap.
+const RESOLUTION_VALUES = ['720p', '1080p', '4k']
+const ruleResolutionEnum: ValidationRule = (c) => {
+  if (c.resolution === undefined) return { kind: 'ok' }
+  if (!RESOLUTION_VALUES.includes(c.resolution)) {
+    return {
+      kind: 'error',
+      message: `Invalid resolution: ${c.resolution} (allowed: ${RESOLUTION_VALUES.join(', ')})`,
+    }
+  }
+  return { kind: 'ok' }
+}
+
 export const FOUNDATION_RULES: ValidationRule[] = [
   ruleDurationsPerModel,              // #1
   ruleHighResRequiresDuration8,       // #2
@@ -270,6 +285,7 @@ export const FOUNDATION_RULES: ValidationRule[] = [
   ruleVeo3NoDisableEnhance,           // #11
   ruleSeedRange,                      // #12
   rulePersonGenerationEnum,           // #13
+  ruleResolutionEnum,                 // #14
 ]
 
 // ---------- factory ----------
