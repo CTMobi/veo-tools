@@ -311,3 +311,19 @@ describe('Rule #11 — Veo 3 cannot disable prompt enhancement (M13 probe findin
     expect(r.valid).toBe(true)
   })
 })
+
+describe('Rule #16 — prompt is required (CR-C)', () => {
+  it("prompt='' => error", () => {
+    const r = validateConfig({ prompt: '', outputPath: '/tmp/x.mp4' } as VeoConfig)
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/prompt cannot be empty/i)
+  })
+  it("prompt='   ' (whitespace only) => error", () => {
+    const r = validateConfig({ prompt: '   ', outputPath: '/tmp/x.mp4' } as VeoConfig)
+    expect(r.valid).toBe(false)
+    if (!r.valid) expect(r.errors.join(' ')).toMatch(/prompt cannot be empty/i)
+  })
+  it('a normal prompt => ok', () => {
+    expect(validateConfig(ok()).valid).toBe(true)
+  })
+})

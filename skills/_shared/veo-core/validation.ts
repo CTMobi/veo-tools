@@ -64,6 +64,16 @@ function estimateTokens(s: string): number {
 }
 
 // ---------- FOUNDATION_RULES ----------
+// #16 (registered first) — prompt is required. A missing --prompt becomes '' in
+// buildConfig, which would otherwise only trip the soft token warning and let an
+// empty prompt reach the paid API. Hard-error on missing/empty/whitespace-only.
+const rulePromptRequired: ValidationRule = (c) => {
+  if (typeof c.prompt !== 'string' || c.prompt.trim() === '') {
+    return { kind: 'error', message: 'prompt cannot be empty', suggestion: 'pass a non-empty --prompt' }
+  }
+  return { kind: 'ok' }
+}
+
 const ruleDurationsPerModel: ValidationRule = (c) => {
   if (c.durationSeconds === undefined) return { kind: 'ok' }
   const allowed = MODEL_DURATIONS.get(c.model!)
@@ -297,6 +307,7 @@ const ruleResolutionPerModel: ValidationRule = (c) => {
 }
 
 export const FOUNDATION_RULES: ValidationRule[] = [
+  rulePromptRequired,                 // #16 (first — clearest message)
   ruleDurationsPerModel,              // #1
   ruleHighResRequiresDuration8,       // #2
   ruleVeo2NoAudio,                    // #3
