@@ -71,6 +71,14 @@ describe('submitGeneration', () => {
     expect(err!.message).toMatch(/parse|invalid.*response|non-JSON/i)
     expect(err!.message).toContain('<html>oops</html>') // capped raw body included for diagnosis
   })
+  it('rejects fast on an unsupported apiHost protocol instead of defaulting to HTTPS', async () => {
+    // A malformed apiHost (e.g. ftp://) must fail fast rather than silently
+    // attempting HTTPS to the wrong port. apiHost is internal/defaulted; this is
+    // defensive fail-fast consistent with the rest of the module.
+    await expect(
+      submitGeneration(cfg(), 'tok', { projectId: 'p', location: 'us-central1', apiHost: 'ftp://127.0.0.1' })
+    ).rejects.toThrow(/unsupported protocol/)
+  })
 })
 
 describe('pollOperation', () => {

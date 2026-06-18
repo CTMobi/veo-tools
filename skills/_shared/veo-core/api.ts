@@ -82,6 +82,10 @@ function parseJsonResponse(source: string, body: string): unknown {
 function makeRequest(url: string, method: string, token: string, body?: unknown): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      reject(new Error(`makeRequest: unsupported protocol "${u.protocol}" in ${url} (expected http/https)`))
+      return
+    }
     const isHttps = u.protocol === 'https:'
     const lib = u.protocol === 'http:' ? http : https
     // Defense-in-depth (mirrors downloadFromHttps): only attach the bearer token
