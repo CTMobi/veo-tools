@@ -12,7 +12,7 @@ Sub-project 1 of 5 in the Veo improvements roadmap. Extracts a shared `@veo-core
 - `generateVideo(config, outputPath)` → `generateVideo(config)` — output destination (`outputPath` or `storageUri`) now lives in the config.
 - Audio default changed from always-off to context-aware (on for most use cases). Restore the old behavior with `--no-audio` / `generateAudio: false`.
 
-**Highlights**: new parameters (`negativePrompt`, `seed`, `sampleCount`, `personGeneration`, `storageUri`, watermark, RAI reason, 4K) · 13-rule `validateConfig` with auto-fixes · cost estimation + `--dry-run` preview · hardened downloads · CI runs `tsc --noEmit` + a comprehensive unit-test suite.
+**Highlights**: new parameters (`negativePrompt`, `seed`, `sampleCount`, `personGeneration`, `storageUri`, watermark, RAI reason, 4K) · rule-based `validateConfig` with auto-fixes · cost estimation + `--dry-run` preview · hardened downloads · CI runs `tsc --noEmit` + a comprehensive unit-test suite.
 
 → Full notes, migration guide, and known limitations: [`docs/releases/2.0.0.md`](docs/releases/2.0.0.md)
 

@@ -12,7 +12,7 @@ All notable changes to `veo-tools` are documented here. Format: [Keep a Changelo
 - `skills/_shared/veo-core/` shared library (types, constants, auth, image-helpers, pricing, api, validation, generate, bootstrap).
 - 7-value Phase 1 USE CASE enum: `hero-background | marketing | social | product | ambient | loop | storytelling` (added `loop` and `storytelling`).
 - Cross-cutting parameters and CLI flags: `--negative-prompt`, `--enhance-prompt` / `--no-enhance-prompt`, `--seed`, `--sample-count`, `--person-generation`, `--storage-uri`, `--add-watermark` / `--no-add-watermark`, `--include-rai-reason`.
-- `FOUNDATION_RULES` (13 rules) + `createValidator({baseRules, extraRules})` factory. Rule #11 (Veo 3 cannot disable prompt enhancement) was added from the M13 probe-pass finding below. Rule #12 (seed must be an integer in `[0, 2147483647]`) and rule #13 (`personGeneration` must be one of `allow_all | allow_adult | disallow`) reject invalid values before the paid API call.
+- `FOUNDATION_RULES` + `createValidator({baseRules, extraRules})` factory: cross-parameter validation that rejects invalid model/duration/resolution/audio/`sampleCount`/`seed`/`personGeneration`/`enhancePrompt` combinations (and enforces per-model resolution caps) before the paid API call, with auto-fixes and suggestions. Notable rules surfaced during review: Veo 3 cannot disable prompt enhancement (from the M13 probe), integer `seed` range, `personGeneration` and `resolution` enums, and per-model max resolution (Lite 1080p, Veo 2 720p).
 - `estimateCost(config)` keyed by model × resolution × duration × audio × sampleCount, with dated-header audit trail in `pricing.ts`.
 - `audio-lexicon.md` reference.
 - 4K resolution support (Veo 3.x).
