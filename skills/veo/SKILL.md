@@ -47,7 +47,7 @@ When the USE CASE is known, look up its audio default in the table above:
 - An explicit user request for audio on/off always wins over the use-case default; pass the matching `--audio` / `--no-audio` flag.
 
 Example — hero-background:
-`veo-generate --prompt "..." --output out.mp4 --no-audio`   ← audio OFF, derived from use case
+`npx ts-node skills/veo/scripts/veo-generate.ts --prompt "..." --output out.mp4 --no-audio`   ← audio OFF, derived from use case
 
 ### Model decision table
 
@@ -130,7 +130,7 @@ Prompt-quality checks (see `validation/prompt-checklist.md`, softened in this re
 - Single camera movement → reject for `loop` / `hero-background` only; warning otherwise.
 - `audio=on` without an Audio Layer descriptor → warning.
 
-Hard API-constraint check (NEW): before presenting, run the library validator on the resolved config — invoke `veo-generate --dry-run` (which calls `validateConfig()` internally). `validateConfig()` never throws; it returns auto-fixes (e.g. duration bumped to 8 for 1080p/4K), warnings, or hard errors (e.g. duration not allowed for the model, Veo 2 + audio, 1080p on Veo 2, outputPath/storageUri XOR). Surface its auto-adjustments and warnings in Phase 4 PRESENT; if it returns errors, fix the config and re-run before presenting.
+Hard API-constraint check (NEW): before presenting, run the library validator on the resolved config — invoke the CLI: `npx ts-node skills/veo/scripts/veo-generate.ts --dry-run` (which calls `validateConfig()` internally). `validateConfig()` never throws; it returns auto-fixes (e.g. duration bumped to 8 for 1080p/4K), warnings, or hard errors (e.g. duration not allowed for the model, Veo 2 + audio, 1080p on Veo 2, outputPath/storageUri XOR). Surface its auto-adjustments and warnings in Phase 4 PRESENT; if it returns errors, fix the config and re-run before presenting.
 
 ### PHASE 4: PRESENT & AWAIT APPROVAL
 
@@ -165,21 +165,21 @@ Shall I generate?
 ```
 
 > The `Cost estimate: ~$X.XX` line is a template. Produce the real value by running
-> `veo-generate --dry-run` on the resolved config — its `estimated cost:` line is computed
+> `npx ts-node skills/veo/scripts/veo-generate.ts --dry-run` on the resolved config — its `estimated cost:` line is computed
 > by `estimateCost(v.autoFixed)` and already includes the breakdown
 > (model, duration, resolution, audio, sampleCount multiplier). Substitute that number
 > for `~$X.XX`. Never hand-estimate the cost. The CLI `--dry-run` output is the abbreviated
 > machine form: it echoes only model, resolution, duration, audio, auto-adjustments,
 > warnings, and the estimateCost() number. The PRESENT block above is the fuller
 > conversational form — you supply the remaining resolved fields (negative prompt,
-> person generation, seed, watermark) from the config you passed to `veo-generate`.
+> person generation, seed, watermark) from the config you passed to `veo-generate.ts`.
 > Both carry the same auto-adjustments, warnings, and the same estimateCost() number.
 
 If validation fails, present the errors from `validateConfig()`, suggest fixes, fix the config, and re-run `--dry-run` before presenting again.
 
 ### PHASE 5: GENERATE
 
-Run `veo-generate` with the resolved flags. Then map the result to one of these outcomes:
+Run `veo-generate.ts` (`npx ts-node skills/veo/scripts/veo-generate.ts`) with the resolved flags. Then map the result to one of these outcomes:
 
 - **Safety filter**: the Vertex AI response carries `raiMediaFilteredCount > 0` and optionally a block reason in the RAI block. The current CLI does not yet decode these fields from the raw operation response — a filtered request throws a generic `pollOperation` error or hits "no download target in poll result". Until the CLI surfaces this explicitly, treat any generation error as a potential safety filter and suggest an edited prompt. The `--include-rai-reason` flag passes `includeRaiReason=true` to the API so the raw response will contain the reason; the CLI does not yet read it back.
 - **Audio blocked, no charge**: the Vertex AI response carries an audio-filtered status in the operation result. The current CLI does not yet decode this field. Until surfaced, a successful generation with audio enabled that returns a video without audio should be treated as an audio rejection — the video is usable; only the audio track was filtered.
@@ -190,7 +190,7 @@ Run `veo-generate` with the resolved flags. Then map the result to one of these 
 Example invocation:
 
 ```bash
-npx ts-node scripts/veo-generate.ts \
+npx ts-node skills/veo/scripts/veo-generate.ts \
   --prompt "your validated prompt" \
   --aspect-ratio 16:9 \
   --duration 6 \
@@ -407,10 +407,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
 
 ### Generation Script
-Use the included TypeScript script at `scripts/veo-generate.ts`:
+Use the included TypeScript script at `skills/veo/scripts/veo-generate.ts`:
 
 ```bash
-npx ts-node scripts/veo-generate.ts \
+npx ts-node skills/veo/scripts/veo-generate.ts \
   --prompt "your cinematic prompt" \
   --aspect-ratio 16:9 \
   --duration 6 \
