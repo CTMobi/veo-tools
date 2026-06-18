@@ -24,7 +24,8 @@ function isTransientPollError(e: unknown): boolean {
   // is transient, but "503" embedded inside an alphanumeric token (e.g. a resource
   // id like "abc503def") is NOT — \b sits only between a word char and a non-word
   // char, and digits+letters are both word chars, so it never fires mid-token.
-  return /\b(503|429)\b/.test(msg)
+  // 502 (Bad Gateway) and 504 (Gateway Timeout) are transient gateway errors too.
+  return /\b(502|503|504|429)\b/.test(msg)
 }
 
 function getProjectAndLocation(): { projectId: string; location: string } {

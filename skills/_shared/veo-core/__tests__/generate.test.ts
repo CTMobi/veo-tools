@@ -244,6 +244,31 @@ describe('generateVideo', () => {
     }
   })
 
+  it('survives a transient 502 Bad Gateway poll failure and then succeeds (PR5-R4 G4)', async () => {
+    ;(api.pollOperation as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('502 Bad Gateway'))
+      .mockResolvedValueOnce({
+        done: true,
+        videoUrl: undefined,
+        gcsUri: undefined,
+        videoBytes: 'AAECAwQF',
+        mimeType: 'video/mp4',
+        raiFilteredCount: 0,
+        raw: {},
+      })
+    vi.useFakeTimers()
+    try {
+      const p = generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      const r = await p
+      expect(r.videoPath).toBe('/tmp/x.mp4')
+      expect(api.pollOperation).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rethrows a permanent poll error promptly without retrying to the deadline (GEM-NEW-2)', async () => {
     // A permanent error (e.g. invalid argument) must NOT be retried: generateVideo
     // rejects immediately with that message, and pollOperation is called exactly once.
