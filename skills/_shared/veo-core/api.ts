@@ -371,7 +371,7 @@ async function downloadFromHttps(
             // resolve — mirroring the success path's documented 'close'-not-'finish'
             // rationale so tmp is always touched after the fd is gone.
             let writeError: Error | undefined
-            let idle: NodeJS.Timeout
+            let idle: NodeJS.Timeout | undefined
             const armIdle = () => {
               if (idle) clearTimeout(idle)
               idle = setTimeout(() => req.destroy(new Error(`socket idle > ${socketIdleMs}ms`)), socketIdleMs)
