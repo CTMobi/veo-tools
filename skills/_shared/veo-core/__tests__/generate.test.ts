@@ -293,6 +293,56 @@ describe('generateVideo', () => {
     expect(api.pollOperation).toHaveBeenCalledTimes(1)
   })
 
+  it('exhausts transient retries on the 6th consecutive transient error and rejects (off-by-one boundary)', async () => {
+    // 6 consecutive transient errors: the loop tolerates 5 retries (transientFailures
+    // 1..5), and the 6th catch finds transientFailures (5) < 5 == false, so it rethrows.
+    // pollOperation is therefore called exactly 6 times (initial + 5 retries).
+    ;(api.pollOperation as ReturnType<typeof vi.fn>)
+      .mockRejectedValue(new Error('The service is experiencing high load, try again later.'))
+    vi.useFakeTimers()
+    try {
+      const p = generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+      // Attach a rejection handler up front so the unhandled-rejection guard doesn't
+      // fire while we step the fake timers across the 5 POLL_INTERVAL sleeps.
+      const assertion = expect(p).rejects.toThrow(/high load/i)
+      for (let i = 0; i < 6; i++) {
+        await vi.advanceTimersByTimeAsync(5_000)
+      }
+      await assertion
+      expect(api.pollOperation).toHaveBeenCalledTimes(6)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects with a polling-timeout error when the operation never completes (timeout path)', async () => {
+    // pollOperation always resolves done:false, so the while(Date.now() < deadline)
+    // loop runs until the 10-minute deadline elapses, then throws. Drive the deadline
+    // with fake timers instead of waiting 10 real minutes.
+    ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValue({
+      done: false,
+      videoUrl: undefined,
+      gcsUri: undefined,
+      videoBytes: undefined,
+      raiFilteredCount: 0,
+      raw: {},
+    })
+    vi.useFakeTimers()
+    try {
+      const p = generateVideo({ prompt: 'a sunset', outputPath: '/tmp/x.mp4' })
+      const assertion = expect(p).rejects.toThrow(/polling timed out/i)
+      // Advance past POLL_TIMEOUT_MS (10 min) in 5s steps so each loop iteration's
+      // setTimeout resolves and Date.now() advances toward the deadline. 130 steps
+      // (650s) comfortably crosses the 600s deadline.
+      for (let i = 0; i < 130; i++) {
+        await vi.advanceTimersByTimeAsync(5_000)
+      }
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('throws a Responsible-AI error when all candidates were filtered (no video)', async () => {
     ;(api.pollOperation as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       done: true,

@@ -127,6 +127,9 @@ export async function generateVideo(config: VeoConfig): Promise<GenerationResult
   if (target) {
     await downloadFile(target, resolved.outputPath!, token)
   } else if (poll.videoBytes) {
+    // An empty base64 string is intentionally treated as no-output: '' is falsy, so we
+    // fall through to the RAI / no-download-target error below rather than writing a
+    // zero-byte file.
     await saveInlineVideo(poll.videoBytes, resolved.outputPath!)
   } else if (poll.raiFilteredCount && poll.raiFilteredCount > 0) {
     throw new Error(
