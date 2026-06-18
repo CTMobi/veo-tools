@@ -28,7 +28,9 @@ async function main(): Promise<void> {
   const resolvedShots = validateShots(sb)
 
   for (const [i, shot] of resolvedShots.entries()) {
-    console.log(`generating shot ${i}...`)
+    // Progress text goes to STDERR so stdout carries only the per-shot JSON results
+    // (consistent with the round-2 stdout-cleanliness fix).
+    console.error(`generating shot ${i}...`)
     const r = await generateVideo(shot)
     console.log(JSON.stringify(r, null, 2))
   }

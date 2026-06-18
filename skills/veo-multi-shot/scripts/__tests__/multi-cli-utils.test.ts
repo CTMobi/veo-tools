@@ -39,6 +39,11 @@ describe('parseArgs', () => {
     expect(a.storyboardPath).toBe('/tmp/sb.json')
     expect(a.dryRun).toBe(true)
   })
+
+  it("accepts a '--'-prefixed value that is not a known flag (--storyboard --logo)", () => {
+    const a = parseArgs(['--storyboard', '--logo'])
+    expect(a.storyboardPath).toBe('--logo')
+  })
 })
 
 describe('loadStoryboard', () => {
@@ -69,6 +74,22 @@ describe('validateShots', () => {
     expect(resolved[0]?.model).toBeTruthy()
     // No cost/total lines on a live validation pass.
     expect(logs.some((l) => /estimated cost|^shot /.test(l))).toBe(false)
+    log.mockRestore(); err.mockRestore(); exit.mockRestore()
+  })
+
+  it("emits validator autoFixMessages to stderr for a Veo2 shot with unspecified audio (CLAUDE-AFM)", () => {
+    const logs: string[] = []
+    const errs: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((s: unknown) => { logs.push(String(s)) })
+    const err = vi.spyOn(console, 'error').mockImplementation((s: unknown) => { errs.push(String(s)) })
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const sb = { shots: [{ prompt: 'a', outputPath: '/tmp/a.mp4', model: 'veo-2.0-generate-001' }] }
+    validateShots(sb)
+    expect(errs.some((s) => /shot 0/.test(s) && /Veo 2 doesn't support audio/i.test(s))).toBe(true)
+    // Auto-fix messages must NOT pollute stdout (reserved for JSON results).
+    expect(logs.some((l) => /Veo 2 doesn't support audio/i.test(l))).toBe(false)
     log.mockRestore(); err.mockRestore(); exit.mockRestore()
   })
 
@@ -103,6 +124,23 @@ describe('runDryRun', () => {
     runDryRun(sb)
     expect(logs.filter((l) => l.startsWith('shot ')).length).toBe(2)
     expect(logs.some((l) => l.startsWith('total estimated cost:'))).toBe(true)
+    log.mockRestore(); err.mockRestore(); exit.mockRestore()
+  })
+
+  it("surfaces validator auto-adjustments before the cost line for a Veo2 shot with unspecified audio (CLAUDE-AFM)", () => {
+    const logs: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((s: unknown) => { logs.push(String(s)) })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`)
+    }) as never)
+    const sb = { shots: [{ prompt: 'a', outputPath: '/tmp/a.mp4', model: 'veo-2.0-generate-001' }] }
+    runDryRun(sb)
+    const adjIdx = logs.findIndex((l) => /shot 0 adjustments:/.test(l) && /Veo 2 doesn't support audio/i.test(l))
+    const costIdx = logs.findIndex((l) => /^shot 0:/.test(l))
+    expect(adjIdx).toBeGreaterThanOrEqual(0)
+    expect(costIdx).toBeGreaterThanOrEqual(0)
+    expect(adjIdx).toBeLessThan(costIdx)
     log.mockRestore(); err.mockRestore(); exit.mockRestore()
   })
 

@@ -14,13 +14,17 @@ export type MultiArgs = { storyboardPath: string; dryRun: boolean; help: boolean
 // parseArgs, a value-taking flag peeks the next token instead of blindly
 // consuming it, so `--storyboard --dry-run` does not eat --dry-run as the path.
 // Unknown flags are rejected rather than silently ignored.
+const KNOWN_FLAGS = ['--storyboard', '--dry-run', '--help']
+
 export function parseArgs(argv: string[]): MultiArgs {
   const out: MultiArgs = { storyboardPath: '', dryRun: false, help: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--storyboard') {
+      // Reject only a missing value (end of argv) or a KNOWN flag; a '--'-prefixed
+      // token that is NOT a known flag is a legitimate value (e.g. `--storyboard --logo`).
       const next = argv[i + 1]
-      if (next === undefined || next.startsWith('--')) {
+      if (next === undefined || KNOWN_FLAGS.includes(next)) {
         console.error(`Flag ${a} requires a value`)
         process.exit(2)
       }
@@ -65,6 +69,12 @@ export function validateShots(sb: Storyboard): VeoConfig[] {
       console.error(`shot ${i}: invalid — ${v.errors.join('; ')}`)
       process.exit(2)
     }
+    // Surface the validator's auto-fix messages (Veo2 audio off, duration bump,
+    // region adjust) so a live run does not silently discard them. They go to
+    // STDERR to keep stdout clean for the per-shot JSON results.
+    if (v.autoFixMessages.length) {
+      console.error(`shot ${i}: ${v.autoFixMessages.join('; ')}`)
+    }
     resolved.push(v.autoFixed)
   }
   return resolved
@@ -81,6 +91,11 @@ export function runDryRun(sb: Storyboard): void {
     if (!v.valid) {
       console.error(`shot ${i}: invalid — ${v.errors.join('; ')}`)
       process.exit(2)
+    }
+    // Mirror the single-shot --dry-run auto-adjustments section: print any
+    // validator auto-fixes BEFORE the per-shot cost line.
+    if (v.autoFixMessages.length) {
+      console.log(`  shot ${i} adjustments: ${v.autoFixMessages.join('; ')}`)
     }
     let cost: ReturnType<typeof estimateCost>
     try {
