@@ -10,7 +10,7 @@ This is the **2.0.0 "Foundation"** release. The skills are now built on a shared
 
 A seamless looping abstract background for website hero sections.
 
-[![Hero Loop Example](docs/thumbnails/hero-loop.jpg)](https://github.com/CTMobi/veo-tools/releases/latest/download/hero-loop.mp4)
+[![Hero Loop Example](docs/thumbnails/hero-loop.jpg)](https://github.com/CTMobi/veo-tools/releases/download/v2.0.0/hero-loop.mp4)
 
 *Click to download video*
 
@@ -18,7 +18,7 @@ A seamless looping abstract background for website hero sections.
 
 A 4-shot promotional video assembled from individually generated clips using `/veo-multi-shot`.
 
-[![Multi-Shot Assembled](docs/thumbnails/multi-shot-assembled.jpg)](https://github.com/CTMobi/veo-tools/releases/latest/download/dataflow-launch-assembled.mp4)
+[![Multi-Shot Assembled](docs/thumbnails/multi-shot-assembled.jpg)](https://github.com/CTMobi/veo-tools/releases/download/v2.0.0/dataflow-launch-assembled.mp4)
 
 *Click to download video*
 
@@ -27,11 +27,11 @@ A 4-shot promotional video assembled from individually generated clips using `/v
 
 | Shot 1: Teaser | Shot 2: Reveal |
 |:---:|:---:|
-| [![Shot 1](docs/thumbnails/shot-01-teaser.jpg)](https://github.com/CTMobi/veo-tools/releases/latest/download/shot-01-teaser.mp4) | [![Shot 2](docs/thumbnails/shot-02-reveal.jpg)](https://github.com/CTMobi/veo-tools/releases/latest/download/shot-02-reveal.mp4) |
+| [![Shot 1](docs/thumbnails/shot-01-teaser.jpg)](https://github.com/CTMobi/veo-tools/releases/download/v2.0.0/shot-01-teaser.mp4) | [![Shot 2](docs/thumbnails/shot-02-reveal.jpg)](https://github.com/CTMobi/veo-tools/releases/download/v2.0.0/shot-02-reveal.mp4) |
 
 | Shot 3: Detail | Shot 4: Context |
 |:---:|:---:|
-| [![Shot 3](docs/thumbnails/shot-03-detail.jpg)](https://github.com/CTMobi/veo-tools/releases/latest/download/shot-03-detail.mp4) | [![Shot 4](docs/thumbnails/shot-04-context.jpg)](https://github.com/CTMobi/veo-tools/releases/latest/download/shot-04-context.mp4) |
+| [![Shot 3](docs/thumbnails/shot-03-detail.jpg)](https://github.com/CTMobi/veo-tools/releases/download/v2.0.0/shot-03-detail.mp4) | [![Shot 4](docs/thumbnails/shot-04-context.jpg)](https://github.com/CTMobi/veo-tools/releases/download/v2.0.0/shot-04-context.mp4) |
 
 </details>
 
