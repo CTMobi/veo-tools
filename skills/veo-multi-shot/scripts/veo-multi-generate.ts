@@ -31,8 +31,16 @@ async function main(): Promise<void> {
     // Progress text goes to STDERR so stdout carries only the per-shot JSON results
     // (consistent with the round-2 stdout-cleanliness fix).
     console.error(`generating shot ${i}...`)
-    const r = await generateVideo(shot)
-    console.log(JSON.stringify(r, null, 2))
+    try {
+      const r = await generateVideo(shot)
+      console.log(JSON.stringify(r, null, 2))
+    } catch (e) {
+      // Name the failing shot index. On a mid-sequence failure the earlier shots are
+      // already generated (and billed); a scripted pipeline needs to know which shot
+      // stopped it, not just the raw error. Matches the per-shot context used by
+      // runDryRun/validateShots.
+      throw new Error(`shot ${i} failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 }
 
