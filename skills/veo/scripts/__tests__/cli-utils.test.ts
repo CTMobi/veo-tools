@@ -52,8 +52,16 @@ describe('buildConfig', () => {
     expect(validateConfig(cfg).valid).toBe(false)
   })
   it('rejects non-integer --sample-count and --seed as NaN (CR-E)', () => {
-    expect(Number.isNaN(buildConfig({ '--prompt': 'x', '--sample-count': '2x' }).sampleCount)).toBe(true)
-    expect(Number.isNaN(buildConfig({ '--prompt': 'x', '--seed': '9z' }).seed)).toBe(true)
+    // Mirror the --duration test: a valid prompt + output destination so validateConfig
+    // reaches the numeric rules cleanly, then assert the full rejection chain — NaN at
+    // the buildConfig layer AND validateConfig(cfg).valid === false — for both flags.
+    const sc = buildConfig({ '--prompt': 'x', '--output': '/tmp/x.mp4', '--sample-count': '2x' })
+    expect(Number.isNaN(sc.sampleCount)).toBe(true)
+    expect(validateConfig(sc).valid).toBe(false)
+
+    const sd = buildConfig({ '--prompt': 'x', '--output': '/tmp/x.mp4', '--seed': '9z' })
+    expect(Number.isNaN(sd.seed)).toBe(true)
+    expect(validateConfig(sd).valid).toBe(false)
   })
   it('parses a clean integer --duration normally (CR-E)', () => {
     expect(buildConfig({ '--prompt': 'x', '--duration': '8' }).durationSeconds).toBe(8)
