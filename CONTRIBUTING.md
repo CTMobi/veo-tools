@@ -174,3 +174,26 @@ Is the change something kdowswell would likely accept?
 ```
 
 When in doubt, base from `main` and PR to CTMobi — it's the safer default. Promoting a fork-internal commit to an upstream PR later is straightforward: create a new branch from `upstream-sync` and cherry-pick the commit onto it.
+
+## Release documentation
+
+Release information lives at three levels, each with a distinct audience. Keep the detail in one place to avoid drift:
+
+| File | Audience | Content |
+|---|---|---|
+| `CHANGELOG.md` | Anyone reading the diff | Technical log, [Keep a Changelog](https://keepachangelog.com/) format (`BREAKING` / `Added` / `Changed` / `Removed`). |
+| `docs/releases/X.Y.Z.md` | Anyone upgrading to that version | Full user-facing notes: breaking changes, migration guide, new features, known limitations. One file per version. |
+| `RELEASE_NOTES.md` (root) | Anyone browsing the repo | Newest-first **index**: a short summary + breaking-changes + highlights per version, each linking to its `docs/releases/X.Y.Z.md`. Summary only — never duplicate the detail. |
+
+### Cutting a release `X.Y.Z`
+
+1. Update `CHANGELOG.md` (`## [X.Y.Z] — <date>` with `BREAKING`/`Added`/`Changed`/`Removed`).
+2. Write `docs/releases/X.Y.Z.md` (full user-facing notes + migration guide).
+3. Prepend a summary entry to `RELEASE_NOTES.md` linking to the new `docs/releases/X.Y.Z.md`.
+4. Bump `.claude-plugin/plugin.json` `version` (and `package.json`) — MAJOR for any incompatible API change (SemVer §8).
+5. After merge, tag and publish from the per-version file:
+   ```bash
+   gh release create vX.Y.Z --notes-file docs/releases/X.Y.Z.md
+   ```
+
+Use the same date in `CHANGELOG.md`, the `docs/releases/` file, and the tag.

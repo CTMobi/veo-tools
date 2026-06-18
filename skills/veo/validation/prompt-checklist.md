@@ -9,11 +9,13 @@ Use this checklist before presenting any prompt to the user. Validation is manda
 These issues will cause poor results or wasted API calls. Fix before proceeding.
 
 ### Multiple Camera Movements
+REJECT for `loop` / `hero-background` use cases (smoother loops with a single motion). WARNING otherwise — marketing/storytelling can use composed movements when justified.
+
 **Pattern**: Stacking movements like "dolly while panning", "orbit and zoom", "tracking with tilt"
 
-**Why it fails**: Veo interprets stacked movements unpredictably—usually favoring one and ignoring others, or creating jarring motion.
+**Why it matters**: Veo interprets stacked movements unpredictably—usually favoring one and ignoring others, or creating jarring motion.
 
-**Fix**: Choose ONE movement. Ask: "What's the primary visual journey?"
+**Fix**: For loops/hero, choose ONE movement. Ask: "What's the primary visual journey?"
 
 | Bad | Good |
 |-----|------|
@@ -24,11 +26,13 @@ These issues will cause poor results or wasted API calls. Fix before proceeding.
 ---
 
 ### Text or UI Element Requests
+WARNING (only when text appears visible in frame): Text/UI element requests are unreliable. Prefer in-camera signage (carved, printed, projected) so the model renders it as part of the scene rather than as captions.
+
 **Pattern**: "show the logo", "text saying...", "display the tagline", "UI overlay"
 
-**Why it fails**: Veo cannot render readable text. Results are illegible or distorted.
+**Why it matters**: Veo renders readable text unreliably. Results are often illegible or distorted.
 
-**Fix**: Remove text requests entirely. Add text in post-production.
+**Fix**: Prefer in-camera signage, or add text in post-production.
 
 | Bad | Good |
 |-----|------|
@@ -128,6 +132,21 @@ These won't necessarily fail, but will likely produce generic/forgettable result
 - Palette: `monochromatic blue`, `earth tones`, `high contrast`
 - Grade reference: `desaturated`, `lifted blacks`, `crushed shadows`
 - Film reference: `Fincher desaturated`, `Malick golden`
+
+---
+
+### Dialogue without quotes
+WARNING: Dialogue without quotation marks may be skipped or mistranscribed. Wrap spoken lines in double quotes — e.g., `"Storm's coming."`
+
+---
+
+### Audio on without descriptors
+WARNING: `audio=on` without explicit Audio / SFX / Ambient descriptors in the prompt falls back to generic ambience. Add descriptors (see `references/audio-lexicon.md`) for predictable tracks.
+
+---
+
+### Comic-book onomatopoeia
+SOFT WARNING: Comic-book onomatopoeia (BAM, WHOOSH) produces on-screen captions, not sound. Swap for Foley-style descriptors — see `references/audio-lexicon.md`.
 
 ---
 
