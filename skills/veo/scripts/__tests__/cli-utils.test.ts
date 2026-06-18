@@ -33,6 +33,10 @@ describe('parseArgs', () => {
     exit.mockRestore()
     err.mockRestore()
   })
+  it("accepts a '--'-prefixed value that is not a known flag (--negative-prompt --logo)", () => {
+    const out = parseArgs(['--negative-prompt', '--logo'])
+    expect(out['--negative-prompt']).toBe('--logo')
+  })
 })
 
 describe('buildConfig', () => {

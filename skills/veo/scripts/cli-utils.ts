@@ -43,10 +43,12 @@ export function parseArgs(argv: string[]): Record<string, string | boolean> {
       process.exit(2)
     }
     if (def.takesValue) {
-      // Peek the next token instead of blindly consuming it: a flag-shaped token
-      // (or end of argv) means the value is missing, e.g. `--prompt --dry-run`.
+      // Peek the next token instead of blindly consuming it: a missing value (end
+      // of argv) or a KNOWN flag means the value is absent, e.g. `--prompt --dry-run`.
+      // A '--'-prefixed token that is NOT a known flag is a legitimate value
+      // (e.g. `--negative-prompt --logo`) and must be accepted.
       const next = argv[i + 1]
-      if (next === undefined || next.startsWith('--')) {
+      if (next === undefined || FLAGS.some((f) => f.name === next)) {
         console.error(`Flag ${a} requires a value`)
         process.exit(2)
       }
