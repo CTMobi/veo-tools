@@ -40,6 +40,19 @@ describe('parseArgs', () => {
 })
 
 describe('buildConfig', () => {
+  it('rejects non-integer --duration (4abc) as NaN so validateConfig fails it, not silent 4 (CR-E)', () => {
+    // parseInt would yield 4 from '4abc'; parseIntStrict yields NaN. validateConfig's
+    // rule #1 (MODEL_DURATIONS.has(NaN) === false) then rejects it.
+    const cfg = buildConfig({ '--prompt': 'x', '--duration': '4abc' })
+    expect(Number.isNaN(cfg.durationSeconds)).toBe(true)
+  })
+  it('rejects non-integer --sample-count and --seed as NaN (CR-E)', () => {
+    expect(Number.isNaN(buildConfig({ '--prompt': 'x', '--sample-count': '2x' }).sampleCount)).toBe(true)
+    expect(Number.isNaN(buildConfig({ '--prompt': 'x', '--seed': '9z' }).seed)).toBe(true)
+  })
+  it('parses a clean integer --duration normally (CR-E)', () => {
+    expect(buildConfig({ '--prompt': 'x', '--duration': '8' }).durationSeconds).toBe(8)
+  })
   it('--no-audio sets generateAudio=false', () => {
     const cfg = buildConfig({ '--prompt': 'x', '--no-audio': true })
     expect(cfg.generateAudio).toBe(false)

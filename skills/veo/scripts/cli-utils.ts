@@ -1,4 +1,6 @@
-// cli-utils.ts — pure flag plumbing for veo-generate. No side effects on import.
+// cli-utils.ts — flag plumbing for veo-generate. Registers the @veo-core bootstrap
+// on import (skipped under VITEST, where vitest.config provides the alias);
+// otherwise pure flag plumbing.
 if (!process.env.VITEST) require('../../_shared/veo-core/bootstrap')
 
 import type { VeoConfig } from '@veo-core/types'
@@ -61,16 +63,24 @@ export function parseArgs(argv: string[]): Record<string, string | boolean> {
   return out
 }
 
+// parseIntStrict — parseInt accepts trailing garbage ('4abc' => 4); this rejects
+// any non-integer string by returning NaN, which validateConfig's numeric rules
+// (#1 duration, #7 sampleCount, #12 seed) then reject. Allows an optional leading
+// minus so out-of-range negatives still surface as a range error, not silent NaN.
+function parseIntStrict(raw: string): number {
+  return /^-?\d+$/.test(raw) ? Number(raw) : Number.NaN
+}
+
 export function buildConfig(flags: Record<string, string | boolean>): VeoConfig {
   const cfg: VeoConfig = { prompt: String(flags['--prompt'] ?? '') }
   if (flags['--output'])             cfg.outputPath        = String(flags['--output'])
   if (flags['--storage-uri'])        cfg.storageUri        = String(flags['--storage-uri'])
   if (flags['--model'])              cfg.model             = String(flags['--model'])
   if (flags['--aspect-ratio'])       cfg.aspectRatio       = flags['--aspect-ratio'] as '16:9' | '9:16'
-  if (flags['--duration'])           cfg.durationSeconds   = parseInt(String(flags['--duration']), 10)
+  if (flags['--duration'])           cfg.durationSeconds   = parseIntStrict(String(flags['--duration']))
   if (flags['--resolution'])         cfg.resolution        = flags['--resolution'] as '720p' | '1080p' | '4k'
-  if (flags['--sample-count'])       cfg.sampleCount       = parseInt(String(flags['--sample-count']), 10)
-  if (flags['--seed'])               cfg.seed              = parseInt(String(flags['--seed']), 10)
+  if (flags['--sample-count'])       cfg.sampleCount       = parseIntStrict(String(flags['--sample-count']))
+  if (flags['--seed'])               cfg.seed              = parseIntStrict(String(flags['--seed']))
   if (flags['--negative-prompt'])    cfg.negativePrompt    = String(flags['--negative-prompt'])
   if (flags['--person-generation'])  cfg.personGeneration  = flags['--person-generation'] as VeoConfig['personGeneration']
   if (flags['--include-rai-reason']) cfg.includeRaiReason  = true
