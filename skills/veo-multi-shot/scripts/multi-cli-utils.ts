@@ -4,7 +4,7 @@ if (!process.env.VITEST) require('../../_shared/veo-core/bootstrap')
 import * as fs from 'node:fs'
 import { estimateCost } from '@veo-core/pricing'
 import { validateConfig } from '@veo-core/validation'
-import type { VeoConfig } from '@veo-core/types'
+import type { VeoConfig, GenerationResult } from '@veo-core/types'
 
 export type Storyboard = { shots: VeoConfig[] }
 
@@ -108,4 +108,25 @@ export function runDryRun(sb: Storyboard): void {
     console.log(`shot ${i}: ${cost.breakdown} — $${cost.usd.toFixed(2)}`)
   }
   console.log(`total estimated cost: $${totalCost.toFixed(2)}`)
+}
+
+// runShots — the live generation loop, extracted from the entry script's main()
+// so it is unit-testable (generate is injected). Generates each resolved shot in
+// order; progress goes to stderr so stdout carries only the per-shot JSON results.
+// On a mid-sequence failure the earlier shots are already generated (and billed),
+// so the error is wrapped with the shot index to make a scripted pipeline
+// diagnosable — matching the per-shot context used by runDryRun/validateShots.
+export async function runShots(
+  resolvedShots: VeoConfig[],
+  generate: (c: VeoConfig) => Promise<GenerationResult>
+): Promise<void> {
+  for (const [i, shot] of resolvedShots.entries()) {
+    console.error(`generating shot ${i}...`)
+    try {
+      const r = await generate(shot)
+      console.log(JSON.stringify(r, null, 2))
+    } catch (e) {
+      throw new Error(`shot ${i} failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
 }

@@ -4,7 +4,7 @@
 require('../../_shared/veo-core/bootstrap')
 
 import { generateVideo } from '@veo-core/generate'
-import { loadStoryboard, runDryRun, validateShots, parseArgs } from './multi-cli-utils'
+import { loadStoryboard, runDryRun, validateShots, runShots, parseArgs } from './multi-cli-utils'
 
 async function main(): Promise<void> {
   const { storyboardPath, dryRun, help } = parseArgs(process.argv.slice(2))
@@ -25,23 +25,9 @@ async function main(): Promise<void> {
   }
   // Capture the resolved (auto-fixed) configs and generate from those, rather than
   // re-iterating the raw sb.shots (which would discard validateShots's resolution).
+  // The live loop lives in runShots (multi-cli-utils) so it is unit-testable.
   const resolvedShots = validateShots(sb)
-
-  for (const [i, shot] of resolvedShots.entries()) {
-    // Progress text goes to STDERR so stdout carries only the per-shot JSON results
-    // (consistent with the round-2 stdout-cleanliness fix).
-    console.error(`generating shot ${i}...`)
-    try {
-      const r = await generateVideo(shot)
-      console.log(JSON.stringify(r, null, 2))
-    } catch (e) {
-      // Name the failing shot index. On a mid-sequence failure the earlier shots are
-      // already generated (and billed); a scripted pipeline needs to know which shot
-      // stopped it, not just the raw error. Matches the per-shot context used by
-      // runDryRun/validateShots.
-      throw new Error(`shot ${i} failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-  }
+  await runShots(resolvedShots, generateVideo)
 }
 
 main().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1) })

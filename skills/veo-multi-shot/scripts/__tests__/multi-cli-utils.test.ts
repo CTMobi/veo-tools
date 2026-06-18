@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { loadStoryboard, runDryRun, validateShots, parseArgs } from '../multi-cli-utils'
+import { loadStoryboard, runDryRun, validateShots, runShots, parseArgs } from '../multi-cli-utils'
+import type { VeoConfig, GenerationResult } from '@veo-core/types'
 
 let tmpDir: string
 
@@ -179,5 +180,36 @@ describe('runDryRun', () => {
     expect(errs.some((s) => /shot 1/.test(s))).toBe(true)
     expect(errs.some((s) => /shot 0/.test(s))).toBe(false)
     log.mockRestore(); err.mockRestore(); exit.mockRestore()
+  })
+})
+
+describe('runShots (live generation loop)', () => {
+  const shot = (over: Partial<VeoConfig> = {}): VeoConfig => ({ prompt: 'p', outputPath: '/tmp/x.mp4', ...over })
+  const fakeResult = (op: string): GenerationResult =>
+    ({ operationName: op, model: 'veo-3.1-generate-001', durationSeconds: 8, resolution: '720p', warnings: [] } as GenerationResult)
+
+  it('wraps a mid-sequence failure with the shot index and stops there', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // shot 0 + 1 succeed, shot 2 fails — the earlier ones are already generated.
+    const generate = vi.fn(async (_c: VeoConfig) => fakeResult('op')) as unknown as (c: VeoConfig) => Promise<GenerationResult>
+    ;(generate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(fakeResult('op0'))
+      .mockResolvedValueOnce(fakeResult('op1'))
+      .mockRejectedValueOnce(new Error('quota exceeded'))
+    await expect(runShots([shot(), shot(), shot()], generate)).rejects.toThrow(/shot 2 failed: quota exceeded/)
+    expect((generate as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(3) // 0,1,2 — stops at the failure
+    expect(log).toHaveBeenCalledTimes(2) // only the two successful shots printed JSON
+    log.mockRestore(); err.mockRestore()
+  })
+
+  it('runs all shots and prints each JSON result on success', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const generate = vi.fn(async () => fakeResult('ok')) as unknown as (c: VeoConfig) => Promise<GenerationResult>
+    await runShots([shot(), shot()], generate)
+    expect((generate as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2)
+    expect(log).toHaveBeenCalledTimes(2)
+    log.mockRestore(); err.mockRestore()
   })
 })
