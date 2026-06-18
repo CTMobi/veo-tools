@@ -194,18 +194,25 @@ export async function saveInlineVideo(base64: string, outputPath: string): Promi
 }
 
 // downloadFile — http/https URL + gs:// dual scheme. Atomic write to randomly-suffixed .tmp then rename.
-// opts.socketIdleMs overrides the idle watchdog (tests shorten it; production omits).
+// opts.socketIdleMs overrides the per-chunk idle watchdog; opts.totalDeadlineMs overrides the global
+// download deadline (tests shorten both; production omits them).
 export async function downloadFile(
   target: string,
   outputPath: string,
   token: string,
-  opts: { socketIdleMs?: number } = {}
+  opts: { socketIdleMs?: number; totalDeadlineMs?: number } = {}
 ): Promise<void> {
   if (target.startsWith('gs://')) {
     return downloadFromGcs(target, outputPath)
   }
   if (target.startsWith('http://') || target.startsWith('https://')) {
-    return downloadFromHttps(target, outputPath, token, opts.socketIdleMs ?? SOCKET_IDLE_MS)
+    return downloadFromHttps(
+      target,
+      outputPath,
+      token,
+      opts.socketIdleMs ?? SOCKET_IDLE_MS,
+      opts.totalDeadlineMs ?? TOTAL_DEADLINE_MS
+    )
   }
   throw new Error(`downloadFile: unsupported scheme — must be http://, https://, or gs:// — got: ${target}`)
 }
@@ -260,162 +267,198 @@ async function downloadFromHttps(
   initialUrl: string,
   outputPath: string,
   token: string,
-  socketIdleMs: number
+  socketIdleMs: number,
+  totalDeadlineMs: number
 ): Promise<void> {
   const tmp = tmpSuffixedPath(outputPath)
   await fs.promises.mkdir(path.dirname(outputPath), { recursive: true })
 
-  const deadline = Date.now() + TOTAL_DEADLINE_MS
+  const deadline = Date.now() + totalDeadlineMs
   let currentUrl = new URL(initialUrl)
   let authorizationActive = true
   let redirects = 0
 
-  while (true) {
-    if (Date.now() > deadline) {
-      await fs.promises.unlink(tmp).catch(() => {})
-      throw new Error(`downloadFile: total deadline exceeded (${TOTAL_DEADLINE_MS}ms)`)
-    }
+  // Global watchdog: the top-of-loop deadline check below only fires between
+  // redirects, so a single slow-but-active download (bytes trickling in under the
+  // socket-idle threshold yet never going idle for socketIdleMs) could exceed the
+  // total deadline without being stopped. This timer destroys the in-flight request
+  // when the absolute deadline passes, regardless of which redirect hop we are on.
+  // activeReq tracks the request currently in flight so the timer can tear it down.
+  let activeReq: http.ClientRequest | undefined
+  const overallTimeout = setTimeout(() => {
+    activeReq?.destroy(new Error('downloadFile: total deadline exceeded'))
+  }, deadline - Date.now())
 
-    const result = await new Promise<
-      | { kind: 'done' }
-      | { kind: 'redirect'; location: string }
-      | { kind: 'error'; message: string }
-    >((resolve) => {
-      const isHttps = currentUrl.protocol === 'https:'
-      const lib = isHttps ? https : http
-      const headers: Record<string, string> = {}
-      // Defense-in-depth: only attach the bearer over HTTPS. Never send credentials
-      // over cleartext http:// — covers a directly-http initial URL (the HTTPS->HTTP
-      // redirect-rejection in decideRedirect handles the downgrade-hop case).
-      if (authorizationActive && isHttps) headers.authorization = `Bearer ${token}`
+  try {
+    while (true) {
+      if (Date.now() > deadline) {
+        await fs.promises.unlink(tmp).catch(() => {})
+        throw new Error(`downloadFile: total deadline exceeded (${totalDeadlineMs}ms)`)
+      }
 
-      const req = lib.request(
-        {
-          method: 'GET',
-          host: currentUrl.hostname,
-          port: currentUrl.port || (isHttps ? 443 : 80),
-          path: currentUrl.pathname + currentUrl.search,
-          headers,
-        },
-        (res) => {
-          // Headers arrived: disarm the pre-header watchdog. From here the per-chunk
-          // idle timer (armIdle, below) governs the body phase.
-          req.setTimeout(0)
-          const status = res.statusCode ?? 0
-          if (status >= 300 && status < 400 && res.headers.location) {
-            resolve({ kind: 'redirect', location: res.headers.location })
-            res.resume()
-            return
-          }
-          if (status < 200 || status >= 300) {
-            const chunks: Buffer[] = []
-            let collected = 0
-            res.on('data', (c: Buffer) => {
-              if (collected < ERROR_BODY_CAP) {
-                chunks.push(c.slice(0, ERROR_BODY_CAP - collected))
-                collected += c.length
-              }
-            })
-            res.on('end', () =>
-              resolve({
-                kind: 'error',
-                message: `downloadFile: HTTP ${status} ${currentUrl.href} — ${Buffer.concat(chunks).toString('utf8').slice(0, ERROR_BODY_CAP)}`,
-              })
-            )
-            res.on('error', (e) => resolve({ kind: 'error', message: String(e) }))
-            return
-          }
-          const ws = fs.createWriteStream(tmp)
-          // Content-Length truncation guard: if the server advertised a length, a
-          // body that ends short is a truncated download — we must NOT rename it to
-          // the final path as if it succeeded.
-          const clHeader = res.headers['content-length']
-          const contentLength = clHeader === undefined ? undefined : parseInt(clHeader, 10)
-          let receivedBytes = 0
-          // truncationMessage — non-undefined iff the server advertised a length and
-          // the bytes we received fall short of it. A short body must NOT be renamed
-          // to the final path as a success; surface it as a truncation error.
-          const truncationMessage = (): string | undefined => {
-            if (contentLength === undefined || Number.isNaN(contentLength)) return undefined
-            if (receivedBytes === contentLength) return undefined
-            return `downloadFile: truncated download (received ${receivedBytes} of ${contentLength} bytes) from ${currentUrl.href}`
-          }
-          let idle: NodeJS.Timeout
-          const armIdle = () => {
-            if (idle) clearTimeout(idle)
-            idle = setTimeout(() => req.destroy(new Error(`socket idle > ${socketIdleMs}ms`)), socketIdleMs)
-          }
-          armIdle()
-          res.on('data', (c: Buffer) => {
-            receivedBytes += c.length
-            armIdle()
-          })
-          res.on('error', (e) => {
-            clearTimeout(idle)
-            ws.destroy()
-            // A premature close on a length-advertised response (Node surfaces this
-            // as an 'aborted'/error on res) is a truncated download — report it as
-            // such rather than the opaque underlying socket error.
-            resolve({ kind: 'error', message: truncationMessage() ?? String(e) })
-          })
-          res.pipe(ws)
-          // Resolve on 'close', not 'finish': 'finish' fires when the writable side
-          // has flushed, but the underlying fd may not be closed yet — renaming the
-          // .tmp at that point races the close and can fail with EPERM on Windows.
-          // 'close' is emitted only after the fd is released, so the subsequent
-          // rename(tmp, outputPath) is safe. The truncation check moves here too.
-          ws.on('close', () => {
-            clearTimeout(idle)
-            const truncated = truncationMessage()
-            if (truncated !== undefined) {
-              resolve({ kind: 'error', message: truncated })
+      const result = await new Promise<
+        | { kind: 'done' }
+        | { kind: 'redirect'; location: string }
+        | { kind: 'error'; message: string }
+      >((resolve) => {
+        const isHttps = currentUrl.protocol === 'https:'
+        const lib = isHttps ? https : http
+        const headers: Record<string, string> = {}
+        // Defense-in-depth: only attach the bearer over HTTPS. Never send credentials
+        // over cleartext http:// — covers a directly-http initial URL (the HTTPS->HTTP
+        // redirect-rejection in decideRedirect handles the downgrade-hop case).
+        if (authorizationActive && isHttps) headers.authorization = `Bearer ${token}`
+
+        const req = lib.request(
+          {
+            method: 'GET',
+            host: currentUrl.hostname,
+            port: currentUrl.port || (isHttps ? 443 : 80),
+            path: currentUrl.pathname + currentUrl.search,
+            headers,
+          },
+          (res) => {
+            // Headers arrived: disarm the pre-header watchdog. From here the per-chunk
+            // idle timer (armIdle, below) governs the body phase.
+            req.setTimeout(0)
+            const status = res.statusCode ?? 0
+            if (status >= 300 && status < 400 && res.headers.location) {
+              resolve({ kind: 'redirect', location: res.headers.location })
+              res.resume()
               return
             }
-            resolve({ kind: 'done' })
-          })
-          ws.on('error', (e) => {
-            clearTimeout(idle)
-            // GEM4: the response is still piping into ws; tear down the HTTP request
-            // too so the socket does not leak when the write target fails (mirrors
-            // the res.on('error') path which already destroys via req's idle timer).
-            req.destroy()
-            resolve({ kind: 'error', message: String(e) })
-          })
-        }
-      )
-      // Pre-header watchdog: the per-chunk idle timer above is only armed inside the
-      // response callback, so a server that accepts the socket but never sends headers
-      // would otherwise hang until the total deadline. A request-level timeout covers
-      // that pre-header wait, rejecting within socketIdleMs.
-      req.setTimeout(socketIdleMs, () => req.destroy(new Error(`headers timeout > ${socketIdleMs}ms`)))
-      req.on('error', (e) => resolve({ kind: 'error', message: String(e) }))
-      req.end()
-    })
+            if (status < 200 || status >= 300) {
+              const chunks: Buffer[] = []
+              let collected = 0
+              res.on('data', (c: Buffer) => {
+                if (collected < ERROR_BODY_CAP) {
+                  chunks.push(c.slice(0, ERROR_BODY_CAP - collected))
+                  collected += c.length
+                }
+              })
+              res.on('end', () =>
+                resolve({
+                  kind: 'error',
+                  message: `downloadFile: HTTP ${status} ${currentUrl.href} — ${Buffer.concat(chunks).toString('utf8').slice(0, ERROR_BODY_CAP)}`,
+                })
+              )
+              res.on('error', (e) => resolve({ kind: 'error', message: String(e) }))
+              return
+            }
+            const ws = fs.createWriteStream(tmp)
+            // Content-Length truncation guard: if the server advertised a length, a
+            // body that ends short is a truncated download — we must NOT rename it to
+            // the final path as if it succeeded.
+            const clHeader = res.headers['content-length']
+            const contentLength = clHeader === undefined ? undefined : parseInt(clHeader, 10)
+            let receivedBytes = 0
+            // truncationMessage — non-undefined iff the server advertised a length and
+            // the bytes we received fall short of it. A short body must NOT be renamed
+            // to the final path as a success; surface it as a truncation error.
+            const truncationMessage = (): string | undefined => {
+              if (contentLength === undefined || Number.isNaN(contentLength)) return undefined
+              if (receivedBytes === contentLength) return undefined
+              return `downloadFile: truncated download (received ${receivedBytes} of ${contentLength} bytes) from ${currentUrl.href}`
+            }
+            // GEM2: a ws 'error' must NOT resolve directly. The caller unlinks tmp on
+            // {kind:'error'}, and on Windows the write stream's fd may still be open at
+            // that moment (EPERM). Instead we stash the error, tear the request down,
+            // and let the ws 'close' handler (which fires only after the fd is released)
+            // resolve — mirroring the success path's documented 'close'-not-'finish'
+            // rationale so tmp is always touched after the fd is gone.
+            let writeError: Error | undefined
+            let idle: NodeJS.Timeout
+            const armIdle = () => {
+              if (idle) clearTimeout(idle)
+              idle = setTimeout(() => req.destroy(new Error(`socket idle > ${socketIdleMs}ms`)), socketIdleMs)
+            }
+            armIdle()
+            res.on('data', (c: Buffer) => {
+              receivedBytes += c.length
+              armIdle()
+            })
+            res.on('error', (e) => {
+              clearTimeout(idle)
+              ws.destroy()
+              // A premature close on a length-advertised response (Node surfaces this
+              // as an 'aborted'/error on res) is a truncated download — report it as
+              // such rather than the opaque underlying socket error.
+              resolve({ kind: 'error', message: truncationMessage() ?? String(e) })
+            })
+            res.pipe(ws)
+            // Resolve on 'close', not 'finish': 'finish' fires when the writable side
+            // has flushed, but the underlying fd may not be closed yet — renaming the
+            // .tmp at that point races the close and can fail with EPERM on Windows.
+            // 'close' is emitted only after the fd is released, so the subsequent
+            // rename(tmp, outputPath) is safe. The truncation check moves here too.
+            ws.on('close', () => {
+              clearTimeout(idle)
+              // GEM2: surface a deferred write error first, now that the fd is released.
+              if (writeError !== undefined) {
+                resolve({ kind: 'error', message: writeError.message })
+                return
+              }
+              const truncated = truncationMessage()
+              if (truncated !== undefined) {
+                resolve({ kind: 'error', message: truncated })
+                return
+              }
+              resolve({ kind: 'done' })
+            })
+            ws.on('error', (e) => {
+              clearTimeout(idle)
+              // GEM4: the response is still piping into ws; tear down the HTTP request
+              // too so the socket does not leak when the write target fails (mirrors
+              // the res.on('error') path which already destroys via req's idle timer).
+              // GEM2: do NOT resolve here — record the error and let ws 'close' resolve
+              // once the fd is released, so the caller's unlink(tmp) cannot race an open fd.
+              writeError = e
+              req.destroy()
+            })
+          }
+        )
+        // GEM1: record the in-flight request so the global overall-deadline watchdog
+        // (set up before the loop) can destroy it even mid-body on a slow-but-active
+        // download that never trips the per-chunk idle timer.
+        activeReq = req
+        // Pre-header watchdog: the per-chunk idle timer above is only armed inside the
+        // response callback, so a server that accepts the socket but never sends headers
+        // would otherwise hang until the total deadline. A request-level timeout covers
+        // that pre-header wait, rejecting within socketIdleMs.
+        req.setTimeout(socketIdleMs, () => req.destroy(new Error(`headers timeout > ${socketIdleMs}ms`)))
+        req.on('error', (e) => resolve({ kind: 'error', message: String(e) }))
+        req.end()
+      })
 
-    if (result.kind === 'done') {
-      await fs.promises.rename(tmp, outputPath)
-      return
+      if (result.kind === 'done') {
+        await fs.promises.rename(tmp, outputPath)
+        return
+      }
+      if (result.kind === 'error') {
+        await fs.promises.unlink(tmp).catch(() => {})
+        throw new Error(result.message)
+      }
+      // Redirect
+      redirects++
+      if (redirects > MAX_REDIRECTS) {
+        await fs.promises.unlink(tmp).catch(() => {})
+        throw new Error(`downloadFile: too many redirects (>${MAX_REDIRECTS})`)
+      }
+      let decision: { nextUrl: URL; crossOrigin: boolean }
+      try {
+        // decideRedirect rejects HTTPS->HTTP downgrades and flags cross-origin hops.
+        decision = decideRedirect(currentUrl, result.location)
+      } catch (e) {
+        await fs.promises.unlink(tmp).catch(() => {})
+        throw e
+      }
+      // Cross-origin Authorization stripping (RFC 6454)
+      if (decision.crossOrigin) authorizationActive = false
+      currentUrl = decision.nextUrl
     }
-    if (result.kind === 'error') {
-      await fs.promises.unlink(tmp).catch(() => {})
-      throw new Error(result.message)
-    }
-    // Redirect
-    redirects++
-    if (redirects > MAX_REDIRECTS) {
-      await fs.promises.unlink(tmp).catch(() => {})
-      throw new Error(`downloadFile: too many redirects (>${MAX_REDIRECTS})`)
-    }
-    let decision: { nextUrl: URL; crossOrigin: boolean }
-    try {
-      // decideRedirect rejects HTTPS->HTTP downgrades and flags cross-origin hops.
-      decision = decideRedirect(currentUrl, result.location)
-    } catch (e) {
-      await fs.promises.unlink(tmp).catch(() => {})
-      throw e
-    }
-    // Cross-origin Authorization stripping (RFC 6454)
-    if (decision.crossOrigin) authorizationActive = false
-    currentUrl = decision.nextUrl
+  } finally {
+    // Always clear the global watchdog so the timer never leaks on any exit path
+    // (done, error, throw, redirect-cap).
+    clearTimeout(overallTimeout)
   }
 }

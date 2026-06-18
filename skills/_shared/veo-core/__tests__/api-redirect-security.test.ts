@@ -149,6 +149,38 @@ describe('downloadFile — socket-idle timeout (belt) and total deadline (suspen
     }
   }, 10_000)
 
+  it('rejects on the global total deadline even when bytes keep trickling under the idle threshold (GEM1)', async () => {
+    // Write one byte every ~40ms and never close. Each chunk re-arms the idle timer,
+    // so a long socketIdleMs (10s) never fires — only the global overall-deadline
+    // watchdog can stop this. With totalDeadlineMs:150 it must reject with /total deadline/.
+    const timers: NodeJS.Timeout[] = []
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': '1048576' })
+      const tick = () => {
+        res.write(Buffer.from([0x41]))
+        timers.push(setTimeout(tick, 40))
+      }
+      tick()
+      // intentionally never call res.end()
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    try {
+      const out = path.join(tmpDir, 'trickle.bin')
+      await expect(
+        downloadFile(`http://127.0.0.1:${port}/trickle`, out, 'tok', {
+          socketIdleMs: 10_000,
+          totalDeadlineMs: 150,
+        })
+      ).rejects.toThrow(/total deadline/i)
+      expect(fs.existsSync(out)).toBe(false) // no stranded final file
+    } finally {
+      timers.forEach((t) => clearTimeout(t))
+      server.closeAllConnections?.()
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  }, 10_000)
+
   it('rejects when the server accepts the socket but never sends headers (pre-header stall)', async () => {
     // Accept the connection and never write a response. The request-level timeout
     // must fire within socketIdleMs instead of hanging until the total deadline.
